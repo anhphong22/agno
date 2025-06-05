@@ -1,6 +1,7 @@
-import pytest
-from unittest.mock import Mock, patch, AsyncMock
 from typing import List
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 from agno.document import Document
 from agno.embedder.base import Embedder
@@ -38,12 +39,7 @@ def mock_opensearch_client():
     client.indices.create.return_value = {"acknowledged": True}
     client.indices.delete.return_value = {"acknowledged": True}
     client.exists.return_value = False
-    client.search.return_value = {
-        "hits": {
-            "hits": [],
-            "total": {"value": 0}
-        }
-    }
+    client.search.return_value = {"hits": {"hits": [], "total": {"value": 0}}}
     client.bulk.return_value = {"errors": False, "items": []}
     client.get.return_value = {"found": False}
     client.count.return_value = {"count": 0}
@@ -61,12 +57,7 @@ def mock_async_opensearch_client():
     client.indices.create.return_value = {"acknowledged": True}
     client.indices.delete.return_value = {"acknowledged": True}
     client.exists.return_value = False
-    client.search.return_value = {
-        "hits": {
-            "hits": [],
-            "total": {"value": 0}
-        }
-    }
+    client.search.return_value = {"hits": {"hits": [], "total": {"value": 0}}}
     client.bulk.return_value = {"errors": False, "items": []}
     client.get.return_value = {"found": False}
     client.count.return_value = {"count": 0}
@@ -77,13 +68,11 @@ def mock_async_opensearch_client():
 @pytest.fixture
 def opensearch_db(mock_embedder):
     """OpensearchDb instance with mock embedder."""
-    with patch('agno.vectordb.opensearch.opensearch.OpenSearch'), \
-        patch('agno.vectordb.opensearch.opensearch.AsyncOpenSearch'):
+    with patch("agno.vectordb.opensearch.opensearch.OpenSearch"), patch(
+        "agno.vectordb.opensearch.opensearch.AsyncOpenSearch"
+    ):
         db = OpensearchDb(
-            index_name=TEST_INDEX_NAME,
-            dimension=TEST_DIMENSION,
-            hosts=TEST_HOSTS,
-            embedder=mock_embedder
+            index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
         )
         return db
 
@@ -91,14 +80,15 @@ def opensearch_db(mock_embedder):
 @pytest.fixture
 def opensearch_db_with_reranker(mock_embedder, mock_reranker):
     """OpensearchDb instance with mock embedder and reranker."""
-    with patch('agno.vectordb.opensearch.opensearch.OpenSearch'), \
-        patch('agno.vectordb.opensearch.opensearch.AsyncOpenSearch'):
+    with patch("agno.vectordb.opensearch.opensearch.OpenSearch"), patch(
+        "agno.vectordb.opensearch.opensearch.AsyncOpenSearch"
+    ):
         db = OpensearchDb(
             index_name=TEST_INDEX_NAME,
             dimension=TEST_DIMENSION,
             hosts=TEST_HOSTS,
             embedder=mock_embedder,
-            reranker=mock_reranker
+            reranker=mock_reranker,
         )
         return db
 
@@ -115,7 +105,7 @@ def create_test_documents():
                 content=f"Test content {i}",
                 name=f"test_doc_{i}",
                 meta_data={"category": f"category_{i}", "index": i},
-                embedding=[0.1 + i * 0.1] * TEST_DIMENSION
+                embedding=[0.1 + i * 0.1] * TEST_DIMENSION,
             )
             documents.append(doc)
         return documents
@@ -128,14 +118,10 @@ class TestOpensearchDbInitialization:
 
     def test_init_with_default_embedder(self):
         """Test initialization with default embedder."""
-        with patch('agno.vectordb.opensearch.opensearch.OpenSearch'), \
-            patch('agno.vectordb.opensearch.opensearch.AsyncOpenSearch'), \
-            patch('agno.embedder.openai.OpenAIEmbedder') as mock_openai:
-            db = OpensearchDb(
-                index_name=TEST_INDEX_NAME,
-                dimension=TEST_DIMENSION,
-                hosts=TEST_HOSTS
-            )
+        with patch("agno.vectordb.opensearch.opensearch.OpenSearch"), patch(
+            "agno.vectordb.opensearch.opensearch.AsyncOpenSearch"
+        ), patch("agno.embedder.openai.OpenAIEmbedder") as mock_openai:
+            db = OpensearchDb(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS)
 
             assert db.index_name == TEST_INDEX_NAME
             assert db.dimension == TEST_DIMENSION
@@ -147,15 +133,17 @@ class TestOpensearchDbInitialization:
         """Test initialization with custom parameters."""
         custom_params = {"ef_construction": 256, "m": 32}
 
-        with patch('agno.vectordb.opensearch.opensearch.OpenSearch'), \
-            patch('agno.vectordb.opensearch.opensearch.AsyncOpenSearch'):
+        with patch("agno.vectordb.opensearch.opensearch.OpenSearch"), patch(
+            "agno.vectordb.opensearch.opensearch.AsyncOpenSearch"
+        ):
             db = OpensearchDb(
                 index_name=TEST_INDEX_NAME,
                 dimension=TEST_DIMENSION,
                 hosts=TEST_HOSTS,
                 embedder=mock_embedder,
+                distance="cosine",
                 engine="faiss",
-                space_type="l2",
+                search_type="vector",
                 parameters=custom_params,
                 http_auth=("user", "pass"),
                 use_ssl=True,
@@ -163,33 +151,15 @@ class TestOpensearchDbInitialization:
                 timeout=60,
                 max_retries=5,
                 retry_on_timeout=False,
-                reranker=mock_reranker
+                reranker=mock_reranker,
             )
 
             assert db.engine == "faiss"
-            assert db.space_type == "l2"
+            assert db.distance == "cosine"
             assert db.parameters["ef_construction"] == 256
             assert db.parameters["m"] == 32
             assert db.embedder == mock_embedder
             assert db.reranker == mock_reranker
-
-    def test_get_default_parameters(self, opensearch_db):
-        """Test default parameters for different engines."""
-        # Test nmslib
-        params = opensearch_db._get_default_parameters("nmslib")
-        assert params == {"ef_construction": 512, "m": 16}
-
-        # Test faiss
-        params = opensearch_db._get_default_parameters("faiss")
-        assert params == {"ef_construction": 512, "m": 16}
-
-        # Test lucene
-        params = opensearch_db._get_default_parameters("lucene")
-        assert params == {"m": 16, "ef_construction": 512}
-
-        # Test unsupported engine
-        with pytest.raises(ValueError, match="Unsupported engine"):
-            opensearch_db._get_default_parameters("invalid")
 
     def test_create_mapping(self, opensearch_db):
         """Test mapping creation."""
@@ -207,7 +177,7 @@ class TestOpensearchDbClient:
 
     def test_client_property(self, opensearch_db, mock_opensearch_client):
         """Test client property creation and caching."""
-        with patch('agno.vectordb.opensearch.opensearch.OpenSearch', return_value=mock_opensearch_client):
+        with patch("agno.vectordb.opensearch.opensearch.OpenSearch", return_value=mock_opensearch_client):
             # First access should create client
             client1 = opensearch_db.client
             assert client1 == mock_opensearch_client
@@ -219,7 +189,7 @@ class TestOpensearchDbClient:
 
     def test_client_creation_failure(self, opensearch_db):
         """Test client creation failure."""
-        with patch('agno.vectordb.opensearch.opensearch.OpenSearch') as mock_class:
+        with patch("agno.vectordb.opensearch.opensearch.OpenSearch") as mock_class:
             mock_class.side_effect = Exception("Connection failed")
 
             with pytest.raises(Exception, match="Connection failed"):
@@ -227,7 +197,7 @@ class TestOpensearchDbClient:
 
     def test_async_client_property(self, opensearch_db, mock_async_opensearch_client):
         """Test async client property creation and caching."""
-        with patch('agno.vectordb.opensearch.opensearch.AsyncOpenSearch', return_value=mock_async_opensearch_client):
+        with patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch", return_value=mock_async_opensearch_client):
             # First access should create client
             client1 = opensearch_db.async_client
             assert client1 == mock_async_opensearch_client
@@ -238,7 +208,7 @@ class TestOpensearchDbClient:
 
     def test_async_client_creation_failure(self, opensearch_db):
         """Test async client creation failure."""
-        with patch('agno.vectordb.opensearch.opensearch.AsyncOpenSearch') as mock_class:
+        with patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch") as mock_class:
             mock_class.side_effect = Exception("Connection failed")
 
             with pytest.raises(Exception, match="Connection failed"):
@@ -286,10 +256,7 @@ class TestOpensearchDbIndexOperations:
 
         opensearch_db.create()
 
-        mock_opensearch_client.indices.create.assert_called_once_with(
-            index=TEST_INDEX_NAME,
-            body=opensearch_db.mapping
-        )
+        mock_opensearch_client.indices.create.assert_called_once_with(index=TEST_INDEX_NAME, body=opensearch_db.mapping)
 
     def test_create_index_exists(self, opensearch_db, mock_opensearch_client):
         """Test create when index already exists."""
@@ -318,8 +285,7 @@ class TestOpensearchDbIndexOperations:
         await opensearch_db.async_create()
 
         mock_async_opensearch_client.indices.create.assert_called_once_with(
-            index=TEST_INDEX_NAME,
-            body=opensearch_db.mapping
+            index=TEST_INDEX_NAME, body=opensearch_db.mapping
         )
 
     def test_drop_index_exists(self, opensearch_db, mock_opensearch_client):
@@ -372,10 +338,7 @@ class TestOpensearchDbDocumentOperations:
         opensearch_db._client = mock_opensearch_client
 
         assert opensearch_db.doc_exists(doc) is True
-        mock_opensearch_client.exists.assert_called_once_with(
-            index=TEST_INDEX_NAME,
-            id=doc.id
-        )
+        mock_opensearch_client.exists.assert_called_once_with(index=TEST_INDEX_NAME, id=doc.id)
 
     def test_doc_exists_false(self, opensearch_db, mock_opensearch_client, create_test_documents):
         """Test doc_exists returns False when document doesn't exist."""
@@ -413,17 +376,12 @@ class TestOpensearchDbDocumentOperations:
         opensearch_db._async_client = mock_async_opensearch_client
 
         assert await opensearch_db.async_doc_exists(doc) is True
-        mock_async_opensearch_client.exists.assert_called_once_with(
-            index=TEST_INDEX_NAME,
-            id=doc.id
-        )
+        mock_async_opensearch_client.exists.assert_called_once_with(index=TEST_INDEX_NAME, id=doc.id)
 
     def test_name_exists_true(self, opensearch_db, mock_opensearch_client):
         """Test name_exists returns True when name exists."""
         mock_opensearch_client.indices.exists.return_value = True
-        mock_opensearch_client.search.return_value = {
-            "hits": {"total": {"value": 1}}
-        }
+        mock_opensearch_client.search.return_value = {"hits": {"total": {"value": 1}}}
         opensearch_db._client = mock_opensearch_client
 
         assert opensearch_db.name_exists("test_name") is True
@@ -431,9 +389,7 @@ class TestOpensearchDbDocumentOperations:
     def test_name_exists_false(self, opensearch_db, mock_opensearch_client):
         """Test name_exists returns False when name doesn't exist."""
         mock_opensearch_client.indices.exists.return_value = True
-        mock_opensearch_client.search.return_value = {
-            "hits": {"total": {"value": 0}}
-        }
+        mock_opensearch_client.search.return_value = {"hits": {"total": {"value": 0}}}
         opensearch_db._client = mock_opensearch_client
 
         assert opensearch_db.name_exists("test_name") is False
@@ -449,9 +405,7 @@ class TestOpensearchDbDocumentOperations:
     async def test_async_name_exists(self, opensearch_db, mock_async_opensearch_client):
         """Test async name_exists method."""
         mock_async_opensearch_client.indices.exists.return_value = True
-        mock_async_opensearch_client.search.return_value = {
-            "hits": {"total": {"value": 1}}
-        }
+        mock_async_opensearch_client.search.return_value = {"hits": {"total": {"value": 1}}}
         opensearch_db._async_client = mock_async_opensearch_client
 
         assert await opensearch_db.async_name_exists("test_name") is True
@@ -462,10 +416,7 @@ class TestOpensearchDbDocumentOperations:
         opensearch_db._client = mock_opensearch_client
 
         assert opensearch_db.id_exists("test_id") is True
-        mock_opensearch_client.exists.assert_called_once_with(
-            index=TEST_INDEX_NAME,
-            id="test_id"
-        )
+        mock_opensearch_client.exists.assert_called_once_with(index=TEST_INDEX_NAME, id="test_id")
 
     def test_id_exists_false(self, opensearch_db, mock_opensearch_client):
         """Test id_exists returns False when ID doesn't exist."""
@@ -501,11 +452,7 @@ class TestOpensearchDbDocumentPreparation:
 
     def test_prepare_document_without_embedding(self, opensearch_db, mock_embedder):
         """Test preparing document without embedding."""
-        doc = Document(
-            id="test_doc",
-            content="test content",
-            name="test_name"
-        )
+        doc = Document(id="test_doc", content="test content", name="test_name")
 
         # The actual implementation calls doc.embed() which internally uses the embedder
         # So we need to mock the embedder's get_embedding_and_usage method
@@ -520,13 +467,10 @@ class TestOpensearchDbDocumentPreparation:
 
     def test_prepare_document_no_id(self, opensearch_db):
         """Test preparing document without ID generates one."""
-        doc = Document(
-            content="test content",
-            embedding=[0.1] * TEST_DIMENSION
-        )
+        doc = Document(content="test content", embedding=[0.1] * TEST_DIMENSION)
 
-        with patch('uuid.uuid4', return_value=Mock(return_value="generated_id")):
-            result = opensearch_db._prepare_document_for_indexing(doc)
+        with patch("uuid.uuid4", return_value=Mock(return_value="generated_id")):
+            opensearch_db._prepare_document_for_indexing(doc)
             assert doc.id is not None
 
     def test_prepare_document_dimension_mismatch(self, opensearch_db):
@@ -534,7 +478,7 @@ class TestOpensearchDbDocumentPreparation:
         doc = Document(
             id="test_doc",
             content="test content",
-            embedding=[0.1] * (TEST_DIMENSION - 1)  # Wrong dimension
+            embedding=[0.1] * (TEST_DIMENSION - 1),  # Wrong dimension
         )
 
         with pytest.raises(ValueError, match="Embedding dimension mismatch"):
@@ -543,22 +487,16 @@ class TestOpensearchDbDocumentPreparation:
     def test_prepare_document_no_embedding_no_embedder(self, opensearch_db):
         """Test preparing document without embedding and no embedder."""
         opensearch_db.embedder = None
-        doc = Document(
-            id="test_doc",
-            content="test content"
-        )
+        doc = Document(id="test_doc", content="test content")
 
         with pytest.raises(ValueError, match="No embedder available"):
             opensearch_db._prepare_document_for_indexing(doc)
 
     def test_prepare_document_embedding_generation_fails(self, opensearch_db, mock_embedder):
         """Test preparing document when embedding generation fails."""
-        doc = Document(
-            id="test_doc",
-            content="test content"
-        )
+        doc = Document(id="test_doc", content="test content")
 
-        with patch.object(doc, 'embed') as mock_embed:
+        with patch.object(doc, "embed") as mock_embed:
             mock_embed.side_effect = Exception("Embedding failed")
 
             with pytest.raises(Exception, match="Embedding failed"):
@@ -573,7 +511,7 @@ class TestOpensearchDbDocumentPreparation:
             meta_data={"key": "value"},
             embedding=[0.1] * TEST_DIMENSION,
             usage={"tokens": 10},
-            reranking_score=0.9
+            reranking_score=0.9,
         )
 
         result = opensearch_db._prepare_document_for_indexing(doc)
@@ -624,7 +562,7 @@ class TestOpensearchDbInsertOperations:
         mock_opensearch_client.indices.exists.return_value = True
         mock_opensearch_client.bulk.return_value = {
             "errors": True,
-            "items": [{"index": {"error": "Something went wrong"}}]
+            "items": [{"index": {"error": "Something went wrong"}}],
         }
         opensearch_db._client = mock_opensearch_client
 
@@ -734,8 +672,8 @@ class TestOpensearchDbSearchOperations:
                             "content": "test content",
                             "name": "test_doc",
                             "meta_data": {"category": "test"},
-                            "embedding": [0.1] * TEST_DIMENSION
-                        }
+                            "embedding": [0.1] * TEST_DIMENSION,
+                        },
                     }
                 ]
             }
@@ -798,11 +736,7 @@ class TestOpensearchDbSearchOperations:
                     {
                         "_id": "doc_1",
                         "_score": 0.9,
-                        "_source": {
-                            "content": "test content",
-                            "meta_data": {},
-                            "embedding": [0.1] * TEST_DIMENSION
-                        }
+                        "_source": {"content": "test content", "meta_data": {}, "embedding": [0.1] * TEST_DIMENSION},
                     }
                 ]
             }
@@ -826,27 +760,6 @@ class TestOpensearchDbSearchOperations:
         results = opensearch_db.search("test query")
 
         assert results == []
-
-    @pytest.mark.asyncio
-    async def test_async_search(self, opensearch_db, mock_async_opensearch_client, mock_embedder):
-        """Test async search method."""
-        mock_async_opensearch_client.indices.exists.return_value = True
-        mock_async_opensearch_client.search.return_value = {"hits": {"hits": []}}
-        opensearch_db._async_client = mock_async_opensearch_client
-
-        results = await opensearch_db.async_search("test query")
-
-        assert results == []
-        mock_async_opensearch_client.search.assert_called_once()
-
-    def test_vector_search(self, opensearch_db):
-        """Test vector_search delegates to search."""
-        with patch.object(opensearch_db, 'search') as mock_search:
-            mock_search.return_value = []
-
-            opensearch_db.vector_search("test query", limit=10)
-
-            mock_search.assert_called_once_with("test query", 10)
 
     def test_keyword_search(self, opensearch_db, mock_opensearch_client):
         """Test keyword search."""
@@ -919,11 +832,7 @@ class TestOpensearchDbFilterOperations:
 
     def test_build_filter_multiple_conditions(self, opensearch_db):
         """Test building multiple filter conditions."""
-        filters = {
-            "category": "test",
-            "score": {"gte": 0.5},
-            "tags": ["tag1", "tag2"]
-        }
+        filters = {"category": "test", "score": {"gte": 0.5}, "tags": ["tag1", "tag2"]}
 
         conditions = opensearch_db._build_filter_conditions(filters)
 
@@ -941,8 +850,8 @@ class TestOpensearchDbUtilityOperations:
             "_source": {
                 "content": "test content",
                 "meta_data": {"category": "test"},
-                "embedding": [0.1] * TEST_DIMENSION
-            }
+                "embedding": [0.1] * TEST_DIMENSION,
+            },
         }
         opensearch_db._client = mock_opensearch_client
 
@@ -959,6 +868,7 @@ class TestOpensearchDbUtilityOperations:
 
         # Test with NotFoundError
         from opensearchpy import exceptions as opensearch_exceptions
+
         mock_opensearch_client.get.side_effect = opensearch_exceptions.NotFoundError("Not found", {}, {})
 
         doc = opensearch_db.get_document_by_id("test_id")
@@ -1064,10 +974,7 @@ class TestOpensearchDbUtilityOperations:
 
         opensearch_db.optimize()
 
-        mock_opensearch_client.indices.forcemerge.assert_called_once_with(
-            index=TEST_INDEX_NAME,
-            max_num_segments=1
-        )
+        mock_opensearch_client.indices.forcemerge.assert_called_once_with(index=TEST_INDEX_NAME, max_num_segments=1)
 
     def test_optimize_index_not_exists(self, opensearch_db, mock_opensearch_client):
         """Test optimizing index when it doesn't exist."""
@@ -1093,8 +1000,8 @@ class TestOpensearchDbDocumentFromHit:
                 "meta_data": {"category": "test"},
                 "embedding": [0.1] * TEST_DIMENSION,
                 "usage": {"tokens": 10},
-                "reranking_score": 0.8
-            }
+                "reranking_score": 0.8,
+            },
         }
 
         doc = opensearch_db._create_document_from_hit(hit)
@@ -1110,13 +1017,7 @@ class TestOpensearchDbDocumentFromHit:
 
     def test_create_document_from_hit_minimal(self, opensearch_db):
         """Test creating document from minimal hit."""
-        hit = {
-            "_id": "test_id",
-            "_score": 0.95,
-            "_source": {
-                "content": "test content"
-            }
-        }
+        hit = {"_id": "test_id", "_score": 0.95, "_source": {"content": "test content"}}
 
         doc = opensearch_db._create_document_from_hit(hit)
 
@@ -1141,11 +1042,7 @@ class TestOpensearchDbEdgeCases:
     def test_large_document_handling(self, opensearch_db, mock_opensearch_client, mock_embedder):
         """Test handling of large documents."""
         large_content = "x" * 10000  # Large content
-        doc = Document(
-            id="large_doc",
-            content=large_content,
-            embedding=[0.1] * TEST_DIMENSION
-        )
+        doc = Document(id="large_doc", content=large_content, embedding=[0.1] * TEST_DIMENSION)
 
         mock_opensearch_client.indices.exists.return_value = True
         mock_opensearch_client.bulk.return_value = {"errors": False, "items": []}
@@ -1158,11 +1055,7 @@ class TestOpensearchDbEdgeCases:
     def test_unicode_content_handling(self, opensearch_db, mock_opensearch_client):
         """Test handling of unicode content."""
         unicode_content = "Test content with unicode: 你好世界 🌍"
-        doc = Document(
-            id="unicode_doc",
-            content=unicode_content,
-            embedding=[0.1] * TEST_DIMENSION
-        )
+        doc = Document(id="unicode_doc", content=unicode_content, embedding=[0.1] * TEST_DIMENSION)
 
         mock_opensearch_client.indices.exists.return_value = True
         mock_opensearch_client.bulk.return_value = {"errors": False, "items": []}
