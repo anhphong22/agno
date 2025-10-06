@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -19,21 +18,7 @@ from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
-
-
-class Engine(str, Enum):
-    """
-    Supported KNN engines for OpenSearch vector operations.
-
-    Attributes:
-        nmslib: Non-Metric Space Library engine for approximate nearest neighbor search
-        faiss: Facebook AI Similarity Search engine for efficient similarity search
-        lucene: Apache Lucene engine for vector search operations
-    """
-
-    nmslib: str = "nmslib"
-    faiss: str = "faiss"
-    lucene: str = "lucene"
+from agno.vectordb.opensearch.index import Engine, SpaceType
 
 
 class OpensearchDb(VectorDb):
@@ -206,11 +191,11 @@ class OpensearchDb(VectorDb):
             - max_inner_product -> innerproduct
         """
         distance_mapping = {
-            Distance.cosine: "cosinesimil",
-            Distance.l2: "l2",
-            Distance.max_inner_product: "innerproduct",
+            Distance.cosine: SpaceType.cosinesimil,
+            Distance.l2: SpaceType.l2,
+            Distance.max_inner_product: SpaceType.innerproduct,
         }
-        return distance_mapping.get(self.distance, "cosinesimil")
+        return distance_mapping.get(self.distance, SpaceType.cosinesimil)
 
     def _create_mapping(self) -> Dict[str, Any]:
         """
@@ -260,6 +245,7 @@ class OpensearchDb(VectorDb):
                     },
                     "usage": {"type": "object", "enabled": True},
                     "reranking_score": {"type": "float"},
+                    "content_id": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
                 }
             },
         }
@@ -773,7 +759,7 @@ class OpensearchDb(VectorDb):
         }
 
         # Add optional fields if they exist
-        optional_fields = ["name", "usage", "reranking_score"]
+        optional_fields = ["name", "usage", "reranking_score", "content_id"]
         for field in optional_fields:
             value = getattr(doc, field, None)
             if value is not None:
@@ -808,6 +794,7 @@ class OpensearchDb(VectorDb):
             embedding=doc_data.get("embedding"),
             usage=doc_data.get("usage"),
             reranking_score=doc_data.get("reranking_score"),
+            content_id=doc_data.get("content_id"),
         )
 
         log_debug(f"Created document from search hit: {doc.id} (score: {hit['_score']:.4f})")
