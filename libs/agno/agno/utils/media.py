@@ -1,9 +1,12 @@
 import base64
+import time
 from enum import Enum
 from pathlib import Path
 from typing import List
 
 import httpx
+
+from agno.utils.log import log_info, log_warning
 
 
 class SampleDataFileExtension(str, Enum):
@@ -29,7 +32,7 @@ def download_image(url: str, output_path: str) -> bool:
         # Check if the response contains image content
         content_type = response.headers.get("Content-Type")
         if not content_type or not content_type.startswith("image"):
-            print(f"URL does not point to an image. Content-Type: {content_type}")
+            log_warning(f"URL does not point to an image. Content-Type: {content_type}")
             return False
 
         path = Path(output_path)
@@ -41,14 +44,14 @@ def download_image(url: str, output_path: str) -> bool:
                 if chunk:
                     file.write(chunk)
 
-        print(f"Image successfully downloaded and saved to '{output_path}'.")
+        log_info(f"Image successfully downloaded and saved to '{output_path}'.")
         return True
 
     except httpx.HTTPError as e:
-        print(f"Error downloading the image: {e}")
+        log_warning(f"Error downloading the image: {e}")
         return False
     except IOError as e:
-        print(f"Error saving the image to '{output_path}': {e}")
+        log_warning(f"Error saving the image to '{output_path}': {e}")
         return False
 
 
@@ -108,10 +111,48 @@ def save_base64_data(base64_data: str, output_path: str) -> bool:
         with open(path, "wb") as file:
             file.write(decoded_data)
 
-        print(f"Data successfully saved to '{path}'.")
+        log_info(f"Data successfully saved to '{path}'.")
         return True
     except Exception as e:
         raise Exception(f"An unexpected error occurred while saving data to '{output_path}': {e}")
+
+
+def wait_for_media_ready(url: str, timeout: int = 120, interval: int = 5, verbose: bool = True) -> bool:
+    """
+    Wait for media to be ready at URL by polling with HEAD requests.
+
+    Args:
+        url (str): The URL to check for media availability
+        timeout (int): Maximum time to wait in seconds (default: 120)
+        interval (int): Seconds between each check (default: 5)
+        verbose (bool): Whether to print progress messages (default: True)
+
+    Returns:
+        bool: True if media is ready, False if timeout reached
+    """
+    max_attempts = timeout // interval
+
+    if verbose:
+        log_info("Media generated! Waiting for upload to complete...")
+
+    for attempt in range(max_attempts):
+        try:
+            response = httpx.head(url, timeout=10)
+            response.raise_for_status()
+            if verbose:
+                log_info(f"Media ready: {url}")
+            return True
+        except httpx.HTTPError:
+            pass
+
+        if verbose and (attempt + 1) % 3 == 0:
+            log_info(f"Still processing... ({(attempt + 1) * interval}s elapsed)")
+
+        time.sleep(interval)
+
+    if verbose:
+        log_warning(f"Timeout waiting for media. Try this URL later: {url}")
+    return False
 
 
 def download_knowledge_filters_sample_data(
