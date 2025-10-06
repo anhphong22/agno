@@ -12,9 +12,9 @@ try:
 except ImportError:
     raise ImportError("`opensearch-py` not installed. Please install using `pip install opensearch-py`")
 
-from agno.document import Document
-from agno.embedder import Embedder
-from agno.reranker.base import Reranker
+from agno.knowledge.document import Document
+from agno.knowledge.embedder import Embedder
+from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -160,7 +160,7 @@ class OpensearchDb(VectorDb):
             If no embedder is provided, defaults to OpenAIEmbedder
         """
         if embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")
@@ -813,30 +813,44 @@ class OpensearchDb(VectorDb):
         log_debug(f"Created document from search hit: {doc.id} (score: {hit['_score']:.4f})")
         return doc
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Insert documents into the index.
 
         Args:
+            content_hash: Content hash for the documents
             documents: List of documents to insert
             filters: Optional filters (unused for insert operation)
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
         """
+        # Store content_hash in each document's metadata for tracking
+        for doc in documents:
+            if doc.meta_data is None:
+                doc.meta_data = {}
+            doc.meta_data["content_hash"] = content_hash
         self._execute_bulk_operation("insert", documents, self._prepare_bulk_insert_data)
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Insert documents into the index asynchronously.
 
         Args:
+            content_hash: Content hash for the documents
             documents: List of documents to insert
             filters: Optional filters (unused for insert operation)
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
         """
+        # Store content_hash in each document's metadata for tracking
+        for doc in documents:
+            if doc.meta_data is None:
+                doc.meta_data = {}
+            doc.meta_data["content_hash"] = content_hash
         await self._async_execute_bulk_operation("insert", documents, self._prepare_bulk_insert_data)
 
     def upsert_available(self) -> bool:
@@ -852,30 +866,44 @@ class OpensearchDb(VectorDb):
         log_debug("Upsert operations are supported for OpenSearch")
         return True
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Upsert documents in the index (insert if new, update if exists).
 
         Args:
+            content_hash: Content hash for the documents
             documents: List of documents to upsert
             filters: Optional filters (unused for upsert operation)
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
         """
+        # Store content_hash in each document's metadata for tracking
+        for doc in documents:
+            if doc.meta_data is None:
+                doc.meta_data = {}
+            doc.meta_data["content_hash"] = content_hash
         self._execute_bulk_operation("upsert", documents, self._prepare_bulk_upsert_data)
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Upsert documents in the index asynchronously (insert if new, update if exists).
 
         Args:
+            content_hash: Content hash for the documents
             documents: List of documents to upsert
             filters: Optional filters (unused for upsert operation)
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
         """
+        # Store content_hash in each document's metadata for tracking
+        for doc in documents:
+            if doc.meta_data is None:
+                doc.meta_data = {}
+            doc.meta_data["content_hash"] = content_hash
         await self._async_execute_bulk_operation("upsert", documents, self._prepare_bulk_upsert_data)
 
     def get_document_by_id(self, document_id: str) -> Optional[Document]:
@@ -1642,3 +1670,155 @@ class OpensearchDb(VectorDb):
         finally:
             end_time = time.time()
             log_debug(f"{operation} operation took {end_time - start_time:.2f} seconds")
+
+    def content_hash_exists(self, content_hash: str) -> bool:
+        """
+        Check if a document with the given content hash exists.
+
+        Args:
+            content_hash: Content hash to check
+
+        Returns:
+            bool: True if document exists, False otherwise
+        """
+        return self._check_field_exists("content_hash", content_hash)
+
+    def delete_by_id(self, id: str) -> bool:
+        """
+        Delete document by ID.
+
+        Args:
+            id: Document ID to delete
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            self.delete_documents([id])
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting document by ID {id}: {e}")
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """
+        Delete documents by name.
+
+        Args:
+            name: Document name to delete
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not self.exists():
+                log_info(f"Index '{self.index_name}' does not exist")
+                return False
+
+            # Search for documents with this name
+            query = {"query": {"term": {"name.keyword": name}}, "size": 1000}
+            response = self.client.search(index=self.index_name, body=query)
+
+            doc_ids = [hit["_id"] for hit in response.get("hits", {}).get("hits", [])]
+            if doc_ids:
+                self.delete_documents(doc_ids)
+                log_info(f"Deleted {len(doc_ids)} documents with name '{name}'")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents by name {name}: {e}")
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """
+        Delete documents by metadata.
+
+        Args:
+            metadata: Metadata dictionary to match
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not self.exists():
+                log_info(f"Index '{self.index_name}' does not exist")
+                return False
+
+            # Build filter conditions
+            filter_conditions = self._build_filter_conditions(metadata)
+            query = {"query": {"bool": {"filter": filter_conditions}}, "size": 1000}
+            response = self.client.search(index=self.index_name, body=query)
+
+            doc_ids = [hit["_id"] for hit in response.get("hits", {}).get("hits", [])]
+            if doc_ids:
+                self.delete_documents(doc_ids)
+                log_info(f"Deleted {len(doc_ids)} documents with metadata {metadata}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents by metadata {metadata}: {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """
+        Delete documents by content ID.
+
+        Args:
+            content_id: Content ID to delete
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not self.exists():
+                log_info(f"Index '{self.index_name}' does not exist")
+                return False
+
+            # Search for documents with this content_id
+            query = {"query": {"term": {"content_id.keyword": content_id}}, "size": 1000}
+            response = self.client.search(index=self.index_name, body=query)
+
+            doc_ids = [hit["_id"] for hit in response.get("hits", {}).get("hits", [])]
+            if doc_ids:
+                self.delete_documents(doc_ids)
+                log_info(f"Deleted {len(doc_ids)} documents with content_id '{content_id}'")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents by content_id {content_id}: {e}")
+            return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update metadata for documents with the given content ID.
+
+        Args:
+            content_id: Content ID to update
+            metadata: Metadata to merge/update
+
+        Raises:
+            Exception: If update fails
+        """
+        try:
+            if not self.exists():
+                logger.error(f"Index '{self.index_name}' does not exist")
+                raise ValueError(f"Index '{self.index_name}' does not exist")
+
+            # Search for documents with this content_id
+            query = {"query": {"term": {"content_id.keyword": content_id}}, "size": 1000}
+            response = self.client.search(index=self.index_name, body=query)
+
+            hits = response.get("hits", {}).get("hits", [])
+            if not hits:
+                log_info(f"No documents found with content_id '{content_id}'")
+                return
+
+            # Update each document
+            for hit in hits:
+                doc_id = hit["_id"]
+                current_metadata = hit["_source"].get("meta_data", {})
+                updated_metadata = {**current_metadata, **metadata}
+
+                self.client.update(index=self.index_name, id=doc_id, body={"doc": {"meta_data": updated_metadata}})
+
+            log_info(f"Updated metadata for {len(hits)} documents with content_id '{content_id}'")
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id {content_id}: {e}")
+            raise
