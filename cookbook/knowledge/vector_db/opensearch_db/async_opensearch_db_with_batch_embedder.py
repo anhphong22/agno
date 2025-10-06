@@ -1,11 +1,13 @@
 import asyncio
 
 from agno.agent import Agent
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.models.openai import OpenAIChat
 from agno.vectordb.opensearch import OpensearchDb
 
 vector_db = OpensearchDb(
-    index_name="recipe_async",
+    index_name="recipes_batch",
     dimension=1536,
     hosts=[
         {
@@ -15,23 +17,24 @@ vector_db = OpensearchDb(
     ],
     # Uncomment the following line to use basic authentication
     # http_auth=("username", "password"),
+    embedder=OpenAIEmbedder(enable_batch=True)
 )
 
-knowledge = Knowledge(
+knowledge_base = Knowledge(
     vector_db=vector_db,
 )
 
-agent = Agent(knowledge=knowledge)
+agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), knowledge=knowledge_base)
 
 if __name__ == "__main__":
     # Comment out after first run
     asyncio.run(
-        knowledge.add_content_async(
-            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+        knowledge_base.add_content_async(
+            url="https://docs.agno.com/concepts/agents/introduction.md"
         )
     )
 
     # Create and use the agent
     asyncio.run(
-        agent.aprint_response("How to make Tom Kha Gai", markdown=True)
+        agent.aprint_response("What is the purpose of an Agno Agent?", markdown=True)
     )

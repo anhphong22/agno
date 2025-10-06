@@ -27,8 +27,9 @@ knowledge.add_content(
 
 agent = Agent(
     knowledge=knowledge,
+    # Enable the agent to search the knowledge base
     search_knowledge=True,
-    show_tool_calls=True,
-    markdown=True,
+    # Enable the agent to read the chat history
+    read_chat_history=True,
 )
 agent.print_response("How to make Thai curry?")
