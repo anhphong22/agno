@@ -5,10 +5,11 @@ from typing import Any, Dict, List, Optional, Type, Union
 from pydantic import BaseModel
 
 from agno.models.openai.like import OpenAILike
+from agno.utils.log import log_debug
 
 
 @dataclass
-class vLLM(OpenAILike):
+class VLLM(OpenAILike):
     """
     Class for interacting with vLLM models via OpenAI-compatible API.
 
@@ -25,8 +26,8 @@ class vLLM(OpenAILike):
     """
 
     id: str = "not-set"
-    name: str = "vLLM"
-    provider: str = "vLLM"
+    name: str = "VLLM"
+    provider: str = "VLLM"
 
     api_key: Optional[str] = getenv("VLLM_API_KEY") or "EMPTY"
     base_url: Optional[str] = getenv("VLLM_BASE_URL", "http://localhost:8000/v1/")
@@ -51,13 +52,14 @@ class vLLM(OpenAILike):
             body["chat_template_kwargs"] = {"enable_thinking": self.enable_thinking}
         self.extra_body = body or None
 
-    def get_request_kwargs(
+    def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
-        request_kwargs = super().get_request_kwargs(
+        request_kwargs = super().get_request_params(
             response_format=response_format, tools=tools, tool_choice=tool_choice
         )
 
@@ -71,4 +73,6 @@ class vLLM(OpenAILike):
             existing_body = request_kwargs.get("extra_body") or {}
             request_kwargs["extra_body"] = {**existing_body, **vllm_body}
 
+        if request_kwargs:
+            log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
         return request_kwargs

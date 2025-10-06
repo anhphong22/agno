@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
+from agno.utils.log import log_debug
 
 
 @dataclass
@@ -15,15 +16,16 @@ class CerebrasOpenAI(OpenAILike):
     name: str = "CerebrasOpenAI"
     provider: str = "CerebrasOpenAI"
 
-    parallel_tool_calls: bool = False
+    parallel_tool_calls: Optional[bool] = None
     base_url: str = "https://api.cerebras.ai/v1"
-    api_key: Optional[str] = getenv("CEREBRAS_API_KEY", None)
+    api_key: Optional[str] = field(default_factory=lambda: getenv("CEREBRAS_API_KEY", None))
 
-    def get_request_kwargs(
+    def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -32,7 +34,7 @@ class CerebrasOpenAI(OpenAILike):
             Dict[str, Any]: A dictionary of keyword arguments for API requests.
         """
         # Get base request kwargs from the parent class
-        request_params = super().get_request_kwargs(
+        request_params = super().get_request_params(
             response_format=response_format, tools=tools, tool_choice=tool_choice
         )
 
@@ -43,7 +45,6 @@ class CerebrasOpenAI(OpenAILike):
                     "type": "function",
                     "function": {
                         "name": tool["function"]["name"],
-                        "strict": True,  # Ensure strict adherence to expected outputs
                         "description": tool["function"]["description"],
                         "parameters": tool["function"]["parameters"],
                     },
@@ -51,8 +52,13 @@ class CerebrasOpenAI(OpenAILike):
                 for tool in tools
             ]
             # Cerebras requires parallel_tool_calls=False for llama-4-scout-17b-16e-instruct
-            request_params["parallel_tool_calls"] = self.parallel_tool_calls
+            if self.id == "llama-4-scout-17b-16e-instruct":
+                request_params["parallel_tool_calls"] = False
+            elif self.parallel_tool_calls is not None:
+                request_params["parallel_tool_calls"] = self.parallel_tool_calls
 
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def _format_message(self, message: Message) -> Dict[str, Any]:
