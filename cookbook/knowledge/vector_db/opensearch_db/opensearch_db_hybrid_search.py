@@ -19,7 +19,7 @@ knowledge = Knowledge(
         ],
         # Uncomment the following line to use basic authentication
         # http_auth=("username", "password"),
-    ),
+    )
 )
 
 knowledge.add_content(
@@ -33,7 +33,6 @@ agent = Agent(
     knowledge=knowledge,
     search_knowledge=True,
     read_chat_history=True,
-    show_tool_calls=True,
     markdown=True,
 )
 agent.print_response(
