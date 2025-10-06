@@ -1,18 +1,19 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, List, Optional, Type, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.models.message import Message
-from agno.utils.log import log_error, log_warning
-from agno.utils.models.aws_claude import format_messages
+from agno.models.response import ModelResponse
+from agno.run.agent import RunOutput
+from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.claude import format_messages
 
 try:
     from anthropic import AnthropicBedrock, APIConnectionError, APIStatusError, AsyncAnthropicBedrock, RateLimitError
-    from anthropic.types import Message as AnthropicMessage
 except ImportError:
     raise ImportError("`anthropic[bedrock]` not installed. Please install using `pip install anthropic[bedrock]`")
 
@@ -139,8 +140,7 @@ class Claude(AnthropicClaude):
         )
         return self.async_client
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_params(self) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
 
@@ -160,15 +160,20 @@ class Claude(AnthropicClaude):
             _request_params["top_k"] = self.top_k
         if self.request_params:
             _request_params.update(self.request_params)
+
+        if _request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)
         return _request_params
 
     def invoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AnthropicMessage:
+        run_response: Optional[RunOutput] = None,
+    ) -> ModelResponse:
         """
         Send a request to the Anthropic API to generate a response.
         """
@@ -177,11 +182,21 @@ class Claude(AnthropicClaude):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            return self.get_client().messages.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+            response = self.get_client().messages.create(
                 model=self.id,
                 messages=chat_messages,  # type: ignore
                 **request_kwargs,
             )
+            assistant_message.metrics.stop_timer()
+
+            model_response = self._parse_provider_response(response, response_format=response_format)
+
+            return model_response
+
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -200,10 +215,12 @@ class Claude(AnthropicClaude):
     def invoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Any:
+        run_response: Optional[RunOutput] = None,
+    ) -> Iterator[ModelResponse]:
         """
         Stream a response from the Anthropic API.
 
@@ -223,15 +240,21 @@ class Claude(AnthropicClaude):
         request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
         try:
-            return (
-                self.get_client()
-                .messages.stream(
-                    model=self.id,
-                    messages=chat_messages,  # type: ignore
-                    **request_kwargs,
-                )
-                .__enter__()
-            )
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
+            with self.get_client().messages.stream(
+                model=self.id,
+                messages=chat_messages,  # type: ignore
+                **request_kwargs,
+            ) as stream:
+                for chunk in stream:
+                    yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
+
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -250,10 +273,12 @@ class Claude(AnthropicClaude):
     async def ainvoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AnthropicMessage:
+        run_response: Optional[RunOutput] = None,
+    ) -> ModelResponse:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
         """
@@ -262,11 +287,23 @@ class Claude(AnthropicClaude):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            return await self.get_async_client().messages.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
+            response = await self.get_async_client().messages.create(
                 model=self.id,
                 messages=chat_messages,  # type: ignore
                 **request_kwargs,
             )
+
+            assistant_message.metrics.stop_timer()
+
+            model_response = self._parse_provider_response(response, response_format=response_format)
+
+            return model_response
+
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -285,10 +322,12 @@ class Claude(AnthropicClaude):
     async def ainvoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AsyncIterator[Any]:
+        run_response: Optional[RunOutput] = None,
+    ) -> AsyncIterator[ModelResponse]:
         """
         Stream an asynchronous response from the Anthropic API.
 
@@ -307,13 +346,22 @@ class Claude(AnthropicClaude):
         try:
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
+
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
             async with self.get_async_client().messages.stream(
                 model=self.id,
                 messages=chat_messages,  # type: ignore
                 **request_kwargs,
             ) as stream:
                 async for chunk in stream:
-                    yield chunk
+                    yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
+
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
