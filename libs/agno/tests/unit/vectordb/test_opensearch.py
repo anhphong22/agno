@@ -3,9 +3,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from agno.document import Document
-from agno.embedder.base import Embedder
-from agno.reranker.base import Reranker
+from agno.knowledge.document import Document
+from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.reranker.base import Reranker
 from agno.vectordb.opensearch import OpensearchDb
 
 # Test constants
@@ -68,8 +68,9 @@ def mock_async_opensearch_client():
 @pytest.fixture
 def opensearch_db(mock_embedder):
     """OpensearchDb instance with mock embedder."""
-    with patch("agno.vectordb.opensearch.opensearch.OpenSearch"), patch(
-        "agno.vectordb.opensearch.opensearch.AsyncOpenSearch"
+    with (
+        patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+        patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
     ):
         db = OpensearchDb(
             index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
@@ -80,8 +81,9 @@ def opensearch_db(mock_embedder):
 @pytest.fixture
 def opensearch_db_with_reranker(mock_embedder, mock_reranker):
     """OpensearchDb instance with mock embedder and reranker."""
-    with patch("agno.vectordb.opensearch.opensearch.OpenSearch"), patch(
-        "agno.vectordb.opensearch.opensearch.AsyncOpenSearch"
+    with (
+        patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+        patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
     ):
         db = OpensearchDb(
             index_name=TEST_INDEX_NAME,
@@ -118,9 +120,11 @@ class TestOpensearchDbInitialization:
 
     def test_init_with_default_embedder(self):
         """Test initialization with default embedder."""
-        with patch("agno.vectordb.opensearch.opensearch.OpenSearch"), patch(
-            "agno.vectordb.opensearch.opensearch.AsyncOpenSearch"
-        ), patch("agno.embedder.openai.OpenAIEmbedder") as mock_openai:
+        with (
+            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+            patch("agno.knowledge.embedder.openai.OpenAIEmbedder") as mock_openai,
+        ):
             db = OpensearchDb(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS)
 
             assert db.index_name == TEST_INDEX_NAME
@@ -133,8 +137,9 @@ class TestOpensearchDbInitialization:
         """Test initialization with custom parameters."""
         custom_params = {"ef_construction": 256, "m": 32}
 
-        with patch("agno.vectordb.opensearch.opensearch.OpenSearch"), patch(
-            "agno.vectordb.opensearch.opensearch.AsyncOpenSearch"
+        with (
+            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
         ):
             db = OpensearchDb(
                 index_name=TEST_INDEX_NAME,
@@ -531,7 +536,7 @@ class TestOpensearchDbInsertOperations:
         mock_opensearch_client.bulk.return_value = {"errors": False, "items": []}
         opensearch_db._client = mock_opensearch_client
 
-        opensearch_db.insert(documents)
+        opensearch_db.insert("test_hash", documents)
 
         mock_opensearch_client.bulk.assert_called_once()
         call_args = mock_opensearch_client.bulk.call_args
@@ -545,14 +550,14 @@ class TestOpensearchDbInsertOperations:
         mock_opensearch_client.bulk.return_value = {"errors": False, "items": []}
         opensearch_db._client = mock_opensearch_client
 
-        opensearch_db.insert(documents)
+        opensearch_db.insert("test_hash", documents)
 
         mock_opensearch_client.indices.create.assert_called_once()
         mock_opensearch_client.bulk.assert_called_once()
 
     def test_insert_empty_documents(self, opensearch_db):
         """Test insert with empty document list."""
-        opensearch_db.insert([])
+        opensearch_db.insert("test_hash", [])
         # Should not raise any exception
 
     def test_insert_bulk_error(self, opensearch_db, mock_opensearch_client, create_test_documents):
@@ -567,7 +572,7 @@ class TestOpensearchDbInsertOperations:
         opensearch_db._client = mock_opensearch_client
 
         # Should not raise exception but log errors
-        opensearch_db.insert(documents)
+        opensearch_db.insert("test_hash", documents)
 
         mock_opensearch_client.bulk.assert_called_once()
 
@@ -580,7 +585,7 @@ class TestOpensearchDbInsertOperations:
         opensearch_db._client = mock_opensearch_client
 
         with pytest.raises(Exception, match="Bulk operation failed"):
-            opensearch_db.insert(documents)
+            opensearch_db.insert("test_hash", documents)
 
     @pytest.mark.asyncio
     async def test_async_insert(self, opensearch_db, mock_async_opensearch_client, create_test_documents):
@@ -591,7 +596,7 @@ class TestOpensearchDbInsertOperations:
         mock_async_opensearch_client.bulk.return_value = {"errors": False, "items": []}
         opensearch_db._async_client = mock_async_opensearch_client
 
-        await opensearch_db.async_insert(documents)
+        await opensearch_db.async_insert("test_hash", documents)
 
         mock_async_opensearch_client.bulk.assert_called_once()
 
@@ -611,7 +616,7 @@ class TestOpensearchDbUpsertOperations:
         mock_opensearch_client.bulk.return_value = {"errors": False, "items": []}
         opensearch_db._client = mock_opensearch_client
 
-        opensearch_db.upsert(documents)
+        opensearch_db.upsert("test_hash", documents)
 
         mock_opensearch_client.bulk.assert_called_once()
         call_args = mock_opensearch_client.bulk.call_args
@@ -628,7 +633,7 @@ class TestOpensearchDbUpsertOperations:
         mock_opensearch_client.bulk.return_value = {"errors": False, "items": []}
         opensearch_db._client = mock_opensearch_client
 
-        opensearch_db.upsert(documents)
+        opensearch_db.upsert("test_hash", documents)
 
         mock_opensearch_client.indices.create.assert_called_once()
         mock_opensearch_client.bulk.assert_called_once()
@@ -638,7 +643,7 @@ class TestOpensearchDbUpsertOperations:
         mock_opensearch_client.indices.exists.return_value = True
         opensearch_db._client = mock_opensearch_client
 
-        opensearch_db.upsert([])
+        opensearch_db.upsert("test_hash", [])
 
         mock_opensearch_client.bulk.assert_not_called()
 
@@ -651,7 +656,7 @@ class TestOpensearchDbUpsertOperations:
         mock_async_opensearch_client.bulk.return_value = {"errors": False, "items": []}
         opensearch_db._async_client = mock_async_opensearch_client
 
-        await opensearch_db.async_upsert(documents)
+        await opensearch_db.async_upsert("test_hash", documents)
 
         mock_async_opensearch_client.bulk.assert_called_once()
 
@@ -1048,7 +1053,7 @@ class TestOpensearchDbEdgeCases:
         mock_opensearch_client.bulk.return_value = {"errors": False, "items": []}
         opensearch_db._client = mock_opensearch_client
 
-        opensearch_db.insert([doc])
+        opensearch_db.insert("test_hash", [doc])
 
         mock_opensearch_client.bulk.assert_called_once()
 
@@ -1061,7 +1066,7 @@ class TestOpensearchDbEdgeCases:
         mock_opensearch_client.bulk.return_value = {"errors": False, "items": []}
         opensearch_db._client = mock_opensearch_client
 
-        opensearch_db.insert([doc])
+        opensearch_db.insert("test_hash", [doc])
 
         mock_opensearch_client.bulk.assert_called_once()
 
