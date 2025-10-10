@@ -832,13 +832,14 @@ class OpensearchDb(VectorDb):
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
+            Uses batch embedding for improved performance.
         """
         # Store content_hash in each document's metadata for tracking
         for doc in documents:
             if doc.meta_data is None:
                 doc.meta_data = {}
             doc.meta_data["content_hash"] = content_hash
-        await self._async_execute_bulk_operation("insert", documents, self._prepare_bulk_insert_data)
+        await self._async_execute_bulk_operation("insert", documents, self._prepare_bulk_insert_data, use_batch_embed=True)
 
     def upsert_available(self) -> bool:
         """
@@ -885,13 +886,14 @@ class OpensearchDb(VectorDb):
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
+            Uses batch embedding for improved performance.
         """
         # Store content_hash in each document's metadata for tracking
         for doc in documents:
             if doc.meta_data is None:
                 doc.meta_data = {}
             doc.meta_data["content_hash"] = content_hash
-        await self._async_execute_bulk_operation("upsert", documents, self._prepare_bulk_upsert_data)
+        await self._async_execute_bulk_operation("upsert", documents, self._prepare_bulk_upsert_data, use_batch_embed=True)
 
     def get_document_by_id(self, document_id: str) -> Optional[Document]:
         """
@@ -1059,7 +1061,9 @@ class OpensearchDb(VectorDb):
             end_time = time.time()
             log_debug(f"Bulk {operation} operation took {end_time - start_time:.2f} seconds")
 
-    async def _async_execute_bulk_operation(self, operation: str, documents: List[Document], prepare_func) -> None:
+    async def _async_execute_bulk_operation(
+        self, operation: str, documents: List[Document], prepare_func, use_batch_embed: bool = False
+    ) -> None:
         """
         Execute bulk operation asynchronously with comprehensive error handling.
 
@@ -1067,9 +1071,11 @@ class OpensearchDb(VectorDb):
             operation: Name of the operation (for logging)
             documents: List of documents to process
             prepare_func: Function to prepare bulk data
+            use_batch_embed: Whether to use batch embedding (default: False)
 
         Note:
             Creates index if it doesn't exist and handles errors gracefully.
+            When use_batch_embed is True, documents are embedded in batches for better performance.
         """
         start_time = time.time()
         log_info(f"Starting async bulk {operation} of {len(documents)} documents to index {self.index_name}")
@@ -1083,6 +1089,10 @@ class OpensearchDb(VectorDb):
             await self.async_create()
 
         try:
+            # Embed documents in batch if requested
+            if use_batch_embed:
+                await self._async_embed_documents(documents)
+
             bulk_data, prepared_count = prepare_func(documents)
             if bulk_data:
                 await self._async_execute_bulk_request(bulk_data, operation, prepared_count)
@@ -1224,6 +1234,71 @@ class OpensearchDb(VectorDb):
                 logger.error(f"Bulk {operation} error: {item[item_key]['error']}")
                 error_count += 1
         return error_count
+
+    async def _async_embed_documents(self, documents: List[Document]) -> None:
+        """
+        Embed a batch of documents using either batch embedding or individual embedding.
+
+        Args:
+            documents: List of documents to embed
+
+        Note:
+            - Uses batch embedding when embedder.enable_batch is True and supports async_get_embeddings_batch_and_usage
+            - Falls back to individual embedding if batch fails (except for rate limit errors)
+            - Skips documents that already have embeddings unless they need to be regenerated
+        """
+        if self.embedder is None:
+            logger.warning("No embedder configured, skipping embedding generation")
+            return
+
+        # Check if embedder supports batch embedding
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            try:
+                # Extract content from documents that need embedding
+                docs_to_embed = [doc for doc in documents if doc.embedding is None]
+
+                if not docs_to_embed:
+                    log_debug("All documents already have embeddings")
+                    return
+
+                # Get batch embeddings and usage
+                doc_contents = [doc.content for doc in docs_to_embed]
+                log_debug(f"Generating batch embeddings for {len(doc_contents)} documents")
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Assign embeddings to documents
+                for j, doc in enumerate(docs_to_embed):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                            log_debug(f"Assigned batch embedding to document {doc.id}")
+                    except Exception as e:
+                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+
+                log_info(f"Successfully generated {len(embeddings)} batch embeddings")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    logger.error(f"Rate limit detected during batch embedding: {e}")
+                    raise e
+                else:
+                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    # Fall back to individual embedding
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents if doc.embedding is None]
+                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+        else:
+            # Use individual embedding
+            log_debug("Using individual embedding (batch embedding not available)")
+            embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents if doc.embedding is None]
+            await asyncio.gather(*embed_tasks, return_exceptions=True)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """

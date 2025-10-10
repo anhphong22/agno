@@ -1092,3 +1092,217 @@ class TestOpensearchDbEdgeCases:
         assert results == []
         call_args = mock_opensearch_client.search.call_args
         assert call_args[1]["body"]["size"] == 10000
+
+
+class TestOpensearchDbBatchEmbedding:
+    """Test batch embedding functionality."""
+
+    @pytest.mark.asyncio
+    async def test_async_embed_documents_with_batch_embedder(self):
+        """Test batch embedding when embedder supports it."""
+        # Create a mock embedder with batch support
+        mock_embedder = Mock(spec=Embedder)
+        mock_embedder.enable_batch = True
+        mock_embedder.async_get_embeddings_batch_and_usage = AsyncMock(
+            return_value=([[0.1] * TEST_DIMENSION, [0.2] * TEST_DIMENSION], [{"tokens": 10}, {"tokens": 12}])
+        )
+
+        with (
+            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+        ):
+            db = OpensearchDb(
+                index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
+            )
+
+            # Create documents without embeddings
+            docs = [
+                Document(id="doc1", content="content 1"),
+                Document(id="doc2", content="content 2"),
+            ]
+
+            # Call batch embedding
+            await db._async_embed_documents(docs)
+
+            # Verify batch embedding was called
+            mock_embedder.async_get_embeddings_batch_and_usage.assert_called_once_with(["content 1", "content 2"])
+
+            # Verify embeddings were assigned
+            assert docs[0].embedding == [0.1] * TEST_DIMENSION
+            assert docs[0].usage == {"tokens": 10}
+            assert docs[1].embedding == [0.2] * TEST_DIMENSION
+            assert docs[1].usage == {"tokens": 12}
+
+    @pytest.mark.asyncio
+    async def test_async_embed_documents_without_batch_embedder(self):
+        """Test individual embedding when batch is not supported."""
+        # Create a mock embedder without batch support
+        mock_embedder = Mock(spec=Embedder)
+        mock_embedder.enable_batch = False
+
+        with (
+            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+        ):
+            db = OpensearchDb(
+                index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
+            )
+
+            # Create mock documents with async_embed method
+            doc1 = Mock(spec=Document)
+            doc1.embedding = None
+            doc1.async_embed = AsyncMock()
+
+            doc2 = Mock(spec=Document)
+            doc2.embedding = None
+            doc2.async_embed = AsyncMock()
+
+            docs = [doc1, doc2]
+
+            # Call batch embedding
+            await db._async_embed_documents(docs)
+
+            # Verify individual embedding was called for each doc
+            doc1.async_embed.assert_called_once_with(embedder=mock_embedder)
+            doc2.async_embed.assert_called_once_with(embedder=mock_embedder)
+
+    @pytest.mark.asyncio
+    async def test_async_embed_documents_skip_already_embedded(self):
+        """Test that documents with embeddings are skipped."""
+        # Create a mock embedder with batch support
+        mock_embedder = Mock(spec=Embedder)
+        mock_embedder.enable_batch = True
+        mock_embedder.async_get_embeddings_batch_and_usage = AsyncMock(
+            return_value=([[0.2] * TEST_DIMENSION], [{"tokens": 12}])
+        )
+
+        with (
+            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+        ):
+            db = OpensearchDb(
+                index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
+            )
+
+            # Create documents - one with embedding, one without
+            docs = [
+                Document(id="doc1", content="content 1", embedding=[0.1] * TEST_DIMENSION),
+                Document(id="doc2", content="content 2"),
+            ]
+
+            # Call batch embedding
+            await db._async_embed_documents(docs)
+
+            # Verify batch embedding was called only for doc without embedding
+            mock_embedder.async_get_embeddings_batch_and_usage.assert_called_once_with(["content 2"])
+
+            # Verify embeddings
+            assert docs[0].embedding == [0.1] * TEST_DIMENSION  # Original embedding preserved
+            assert docs[1].embedding == [0.2] * TEST_DIMENSION  # New embedding assigned
+
+    @pytest.mark.asyncio
+    async def test_async_embed_documents_rate_limit_error(self):
+        """Test that rate limit errors are raised and not caught."""
+        # Create a mock embedder with batch support
+        mock_embedder = Mock(spec=Embedder)
+        mock_embedder.enable_batch = True
+        mock_embedder.async_get_embeddings_batch_and_usage = AsyncMock(
+            side_effect=Exception("Rate limit exceeded: 429 Too Many Requests")
+        )
+
+        with (
+            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+        ):
+            db = OpensearchDb(
+                index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
+            )
+
+            docs = [Document(id="doc1", content="content 1")]
+
+            # Verify that rate limit error is raised
+            with pytest.raises(Exception, match="Rate limit"):
+                await db._async_embed_documents(docs)
+
+    @pytest.mark.asyncio
+    async def test_async_embed_documents_fallback_on_error(self):
+        """Test fallback to individual embedding on non-rate-limit errors."""
+        # Create a mock embedder with batch support that fails
+        mock_embedder = Mock(spec=Embedder)
+        mock_embedder.enable_batch = True
+        mock_embedder.async_get_embeddings_batch_and_usage = AsyncMock(side_effect=Exception("Some other error"))
+
+        with (
+            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+        ):
+            db = OpensearchDb(
+                index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
+            )
+
+            # Create mock documents with async_embed method
+            doc1 = Mock(spec=Document)
+            doc1.embedding = None
+            doc1.async_embed = AsyncMock()
+
+            docs = [doc1]
+
+            # Call batch embedding
+            await db._async_embed_documents(docs)
+
+            # Verify fallback to individual embedding
+            doc1.async_embed.assert_called_once_with(embedder=mock_embedder)
+
+    @pytest.mark.asyncio
+    async def test_async_insert_uses_batch_embedding(self, mock_async_opensearch_client):
+        """Test that async_insert uses batch embedding."""
+        # Create a mock embedder with batch support
+        mock_embedder = Mock(spec=Embedder)
+        mock_embedder.enable_batch = True
+        mock_embedder.async_get_embeddings_batch_and_usage = AsyncMock(
+            return_value=([[0.1] * TEST_DIMENSION], [{"tokens": 10}])
+        )
+
+        with (
+            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch", return_value=mock_async_opensearch_client),
+        ):
+            db = OpensearchDb(
+                index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
+            )
+            db._async_client = mock_async_opensearch_client
+
+            docs = [Document(id="doc1", content="content 1")]
+
+            # Call async insert
+            await db.async_insert("test_hash", docs)
+
+            # Verify batch embedding was called
+            mock_embedder.async_get_embeddings_batch_and_usage.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_async_upsert_uses_batch_embedding(self, mock_async_opensearch_client):
+        """Test that async_upsert uses batch embedding."""
+        # Create a mock embedder with batch support
+        mock_embedder = Mock(spec=Embedder)
+        mock_embedder.enable_batch = True
+        mock_embedder.async_get_embeddings_batch_and_usage = AsyncMock(
+            return_value=([[0.1] * TEST_DIMENSION], [{"tokens": 10}])
+        )
+
+        with (
+            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch", return_value=mock_async_opensearch_client),
+        ):
+            db = OpensearchDb(
+                index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
+            )
+            db._async_client = mock_async_opensearch_client
+
+            docs = [Document(id="doc1", content="content 1")]
+
+            # Call async upsert
+            await db.async_upsert("test_hash", docs)
+
+            # Verify batch embedding was called
+            mock_embedder.async_get_embeddings_batch_and_usage.assert_called_once()
