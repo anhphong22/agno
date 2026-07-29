@@ -7,6 +7,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder.base import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.vectordb.opensearch import OpensearchDb
+from agno.vectordb.search import SearchType
 
 # Test constants
 TEST_INDEX_NAME = "test_index"
@@ -129,9 +130,28 @@ class TestOpensearchDbInitialization:
 
             assert db.index_name == TEST_INDEX_NAME
             assert db.dimension == TEST_DIMENSION
-            assert db.engine == "nmslib"
+            assert db.engine == "faiss"
             assert db.space_type == "cosinesimil"
             mock_openai.assert_called_once()
+
+    def test_get_supported_search_types(self, mock_embedder):
+        """Test that all three search types are reported as supported."""
+        with (
+            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+        ):
+            db = OpensearchDb(
+                index_name=TEST_INDEX_NAME,
+                dimension=TEST_DIMENSION,
+                hosts=TEST_HOSTS,
+                embedder=mock_embedder,
+            )
+
+            assert db.get_supported_search_types() == [
+                SearchType.vector,
+                SearchType.keyword,
+                SearchType.hybrid,
+            ]
 
     def test_init_with_custom_parameters(self, mock_embedder, mock_reranker):
         """Test initialization with custom parameters."""

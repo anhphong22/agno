@@ -54,7 +54,7 @@ class OpensearchDb(VectorDb):
         dimension: int,
         hosts: List[Dict[str, Any]],
         embedder: Optional[Embedder] = None,
-        engine: Engine = Engine.nmslib,
+        engine: Engine = Engine.faiss,
         distance: Distance = Distance.cosine,
         search_type: SearchType = SearchType.vector,
         parameters: Optional[Dict[str, Any]] = None,
@@ -75,7 +75,8 @@ class OpensearchDb(VectorDb):
             dimension: Dimensionality of the vector embeddings
             hosts: List of OpenSearch host configurations
             embedder: Embedder instance for generating vector embeddings
-            engine: KNN engine to use (nmslib, faiss, or lucene)
+            engine: KNN engine to use (faiss, lucene, or nmslib). Defaults to faiss.
+                Note: nmslib cannot be used for new indexes on OpenSearch 3.0.0+.
             distance: Distance metric for similarity calculations
             search_type: Default search type (vector, keyword, or hybrid)
             parameters: Custom engine parameters (will be merged with defaults)
@@ -1884,3 +1885,7 @@ class OpensearchDb(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id {content_id}: {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.keyword, SearchType.hybrid]
