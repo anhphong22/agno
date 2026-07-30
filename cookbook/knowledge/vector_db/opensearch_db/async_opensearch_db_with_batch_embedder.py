@@ -20,11 +20,11 @@ from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.opensearch import OpensearchDb
+from agno.vectordb.opensearch import OpenSearch
 
 # Configure OpenSearch vector database with batch embedder
 # Note: enable_batch=True enables batch embedding for async operations
-vector_db = OpensearchDb(
+vector_db = OpenSearch(
     index_name="recipes_batch",
     dimension=1536,
     hosts=[

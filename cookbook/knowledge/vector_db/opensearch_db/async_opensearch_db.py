@@ -2,9 +2,9 @@ import asyncio
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.opensearch import OpensearchDb
+from agno.vectordb.opensearch import OpenSearch
 
-vector_db = OpensearchDb(
+vector_db = OpenSearch(
     index_name="recipe_async",
     dimension=1536,
     hosts=[

@@ -1,3 +1,4 @@
-from agno.vectordb.opensearch.opensearch import OpensearchDb
+from agno.vectordb.opensearch.index import Engine, SpaceType
+from agno.vectordb.opensearch.opensearch import OpenSearch
 
-__all__ = ["OpensearchDb"]
+__all__ = ["Engine", "OpenSearch", "SpaceType"]

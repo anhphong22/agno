@@ -6,7 +6,7 @@ import pytest
 from agno.knowledge.document import Document
 from agno.knowledge.embedder.base import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.vectordb.opensearch import OpensearchDb
+from agno.vectordb.opensearch import OpenSearch
 from agno.vectordb.search import SearchType
 
 # Test constants
@@ -68,25 +68,23 @@ def mock_async_opensearch_client():
 
 @pytest.fixture
 def opensearch_db(mock_embedder):
-    """OpensearchDb instance with mock embedder."""
+    """OpenSearch instance with mock embedder."""
     with (
-        patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-        patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+        patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+        patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
     ):
-        db = OpensearchDb(
-            index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
-        )
+        db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder)
         return db
 
 
 @pytest.fixture
 def opensearch_db_with_reranker(mock_embedder, mock_reranker):
-    """OpensearchDb instance with mock embedder and reranker."""
+    """OpenSearch instance with mock embedder and reranker."""
     with (
-        patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-        patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+        patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+        patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
     ):
-        db = OpensearchDb(
+        db = OpenSearch(
             index_name=TEST_INDEX_NAME,
             dimension=TEST_DIMENSION,
             hosts=TEST_HOSTS,
@@ -116,17 +114,17 @@ def create_test_documents():
     return _create_documents
 
 
-class TestOpensearchDbInitialization:
-    """Test OpensearchDb initialization."""
+class TestOpenSearchInitialization:
+    """Test OpenSearch initialization."""
 
     def test_init_with_default_embedder(self):
         """Test initialization with default embedder."""
         with (
-            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
             patch("agno.knowledge.embedder.openai.OpenAIEmbedder") as mock_openai,
         ):
-            db = OpensearchDb(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS)
+            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS)
 
             assert db.index_name == TEST_INDEX_NAME
             assert db.dimension == TEST_DIMENSION
@@ -137,10 +135,10 @@ class TestOpensearchDbInitialization:
     def test_base_class_attributes_are_initialized(self, mock_embedder):
         """VectorDb base attributes must be set so the db can be registered and named."""
         with (
-            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpensearchDb(
+            db = OpenSearch(
                 index_name=TEST_INDEX_NAME,
                 dimension=TEST_DIMENSION,
                 hosts=TEST_HOSTS,
@@ -148,16 +146,16 @@ class TestOpensearchDbInitialization:
             )
 
             assert db.id is not None
-            assert db.name == "OpensearchDb"
+            assert db.name == "OpenSearch"
             assert db.description is None
 
     def test_explicit_id_and_name_are_preserved(self, mock_embedder):
         """Explicitly supplied id/name must override the generated defaults."""
         with (
-            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpensearchDb(
+            db = OpenSearch(
                 index_name=TEST_INDEX_NAME,
                 dimension=TEST_DIMENSION,
                 hosts=TEST_HOSTS,
@@ -174,10 +172,10 @@ class TestOpensearchDbInitialization:
     def test_get_supported_search_types(self, mock_embedder):
         """Test that all three search types are reported as supported."""
         with (
-            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpensearchDb(
+            db = OpenSearch(
                 index_name=TEST_INDEX_NAME,
                 dimension=TEST_DIMENSION,
                 hosts=TEST_HOSTS,
@@ -195,10 +193,10 @@ class TestOpensearchDbInitialization:
         custom_params = {"ef_construction": 256, "m": 32}
 
         with (
-            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpensearchDb(
+            db = OpenSearch(
                 index_name=TEST_INDEX_NAME,
                 dimension=TEST_DIMENSION,
                 hosts=TEST_HOSTS,
@@ -234,12 +232,12 @@ class TestOpensearchDbInitialization:
         assert mapping["mappings"]["properties"]["embedding"]["dimension"] == TEST_DIMENSION
 
 
-class TestOpensearchDbClient:
+class TestOpenSearchClient:
     """Test client creation and management."""
 
     def test_client_property(self, opensearch_db, mock_opensearch_client):
         """Test client property creation and caching."""
-        with patch("agno.vectordb.opensearch.opensearch.OpenSearch", return_value=mock_opensearch_client):
+        with patch("agno.vectordb.opensearch.opensearch.OpenSearchClient", return_value=mock_opensearch_client):
             # First access should create client
             client1 = opensearch_db.client
             assert client1 == mock_opensearch_client
@@ -251,7 +249,7 @@ class TestOpensearchDbClient:
 
     def test_client_creation_failure(self, opensearch_db):
         """Test client creation failure."""
-        with patch("agno.vectordb.opensearch.opensearch.OpenSearch") as mock_class:
+        with patch("agno.vectordb.opensearch.opensearch.OpenSearchClient") as mock_class:
             mock_class.side_effect = Exception("Connection failed")
 
             with pytest.raises(Exception, match="Connection failed"):
@@ -259,7 +257,9 @@ class TestOpensearchDbClient:
 
     def test_async_client_property(self, opensearch_db, mock_async_opensearch_client):
         """Test async client property creation and caching."""
-        with patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch", return_value=mock_async_opensearch_client):
+        with patch(
+            "agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient", return_value=mock_async_opensearch_client
+        ):
             # First access should create client
             client1 = opensearch_db.async_client
             assert client1 == mock_async_opensearch_client
@@ -271,7 +271,7 @@ class TestOpensearchDbClient:
     def test_async_client_forwards_connection_settings(self, opensearch_db, mock_async_opensearch_client):
         """Async client must honour the configured timeout and retry settings."""
         with patch(
-            "agno.vectordb.opensearch.opensearch.AsyncOpenSearch", return_value=mock_async_opensearch_client
+            "agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient", return_value=mock_async_opensearch_client
         ) as mock_class:
             _ = opensearch_db.async_client
 
@@ -312,14 +312,14 @@ class TestOpensearchDbClient:
 
     def test_async_client_creation_failure(self, opensearch_db):
         """Test async client creation failure."""
-        with patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch") as mock_class:
+        with patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient") as mock_class:
             mock_class.side_effect = Exception("Connection failed")
 
             with pytest.raises(Exception, match="Connection failed"):
                 _ = opensearch_db.async_client
 
 
-class TestOpensearchDbIndexOperations:
+class TestOpenSearchIndexOperations:
     """Test index operations."""
 
     def test_exists_true(self, opensearch_db, mock_opensearch_client):
@@ -430,7 +430,7 @@ class TestOpensearchDbIndexOperations:
         mock_async_opensearch_client.indices.delete.assert_called_once_with(index=TEST_INDEX_NAME)
 
 
-class TestOpensearchDbDocumentOperations:
+class TestOpenSearchDocumentOperations:
     """Test document operations."""
 
     def test_doc_exists_true(self, opensearch_db, mock_opensearch_client, create_test_documents):
@@ -537,7 +537,7 @@ class TestOpensearchDbDocumentOperations:
         assert opensearch_db.id_exists("test_id") is False
 
 
-class TestOpensearchDbDocumentPreparation:
+class TestOpenSearchDocumentPreparation:
     """Test document preparation for indexing."""
 
     def test_prepare_document_with_embedding(self, opensearch_db, create_test_documents):
@@ -645,7 +645,7 @@ class TestOpensearchDbDocumentPreparation:
         assert result["reranking_score"] == doc.reranking_score
 
 
-class TestOpensearchDbInsertOperations:
+class TestOpenSearchInsertOperations:
     """Test insert operations."""
 
     def test_insert_success(self, opensearch_db, mock_opensearch_client, create_test_documents):
@@ -756,7 +756,7 @@ class TestOpensearchDbInsertOperations:
         mock_async_opensearch_client.bulk.assert_called_once()
 
 
-class TestOpensearchDbUpsertOperations:
+class TestOpenSearchUpsertOperations:
     """Test upsert operations."""
 
     def test_upsert_available(self, opensearch_db):
@@ -832,7 +832,7 @@ class TestOpensearchDbUpsertOperations:
         mock_async_opensearch_client.bulk.assert_called_once()
 
 
-class TestOpensearchDbSearchOperations:
+class TestOpenSearchSearchOperations:
     """Test search operations."""
 
     def test_search_success(self, opensearch_db, mock_opensearch_client, mock_embedder):
@@ -967,7 +967,7 @@ class TestOpensearchDbSearchOperations:
         assert len(search_body["query"]["bool"]["should"]) == 2  # KNN + multi_match
 
 
-class TestOpensearchDbFilterOperations:
+class TestOpenSearchFilterOperations:
     """Test filter building operations."""
 
     def test_build_filter_exact_match(self, opensearch_db):
@@ -1015,7 +1015,7 @@ class TestOpensearchDbFilterOperations:
         assert len(conditions) == 3
 
 
-class TestOpensearchDbUtilityOperations:
+class TestOpenSearchUtilityOperations:
     """Test utility operations."""
 
     def test_get_document_by_id_found(self, opensearch_db, mock_opensearch_client):
@@ -1162,7 +1162,7 @@ class TestOpensearchDbUtilityOperations:
         mock_opensearch_client.indices.forcemerge.assert_not_called()
 
 
-class TestOpensearchDbDocumentFromHit:
+class TestOpenSearchDocumentFromHit:
     """Test document creation from search hits."""
 
     def test_create_document_from_hit_complete(self, opensearch_db):
@@ -1206,7 +1206,7 @@ class TestOpensearchDbDocumentFromHit:
         assert doc.reranking_score is None
 
 
-class TestOpensearchDbEdgeCases:
+class TestOpenSearchEdgeCases:
     """Test edge cases and error conditions."""
 
     def test_import_error_handling(self):
@@ -1265,7 +1265,7 @@ class TestOpensearchDbEdgeCases:
         assert call_args[1]["body"]["size"] == 10000
 
 
-class TestOpensearchDbBatchEmbedding:
+class TestOpenSearchBatchEmbedding:
     """Test batch embedding functionality."""
 
     @pytest.mark.asyncio
@@ -1279,10 +1279,10 @@ class TestOpensearchDbBatchEmbedding:
         )
 
         with (
-            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpensearchDb(
+            db = OpenSearch(
                 index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
             )
 
@@ -1312,10 +1312,10 @@ class TestOpensearchDbBatchEmbedding:
         mock_embedder.enable_batch = False
 
         with (
-            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpensearchDb(
+            db = OpenSearch(
                 index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
             )
 
@@ -1348,10 +1348,10 @@ class TestOpensearchDbBatchEmbedding:
         )
 
         with (
-            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpensearchDb(
+            db = OpenSearch(
                 index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
             )
 
@@ -1382,10 +1382,10 @@ class TestOpensearchDbBatchEmbedding:
         )
 
         with (
-            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpensearchDb(
+            db = OpenSearch(
                 index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
             )
 
@@ -1404,10 +1404,10 @@ class TestOpensearchDbBatchEmbedding:
         mock_embedder.async_get_embeddings_batch_and_usage = AsyncMock(side_effect=Exception("Some other error"))
 
         with (
-            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpensearchDb(
+            db = OpenSearch(
                 index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
             )
 
@@ -1435,10 +1435,12 @@ class TestOpensearchDbBatchEmbedding:
         )
 
         with (
-            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch", return_value=mock_async_opensearch_client),
+            patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+            patch(
+                "agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient", return_value=mock_async_opensearch_client
+            ),
         ):
-            db = OpensearchDb(
+            db = OpenSearch(
                 index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
             )
             db._async_client = mock_async_opensearch_client
@@ -1462,10 +1464,12 @@ class TestOpensearchDbBatchEmbedding:
         )
 
         with (
-            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
-            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch", return_value=mock_async_opensearch_client),
+            patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
+            patch(
+                "agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient", return_value=mock_async_opensearch_client
+            ),
         ):
-            db = OpensearchDb(
+            db = OpenSearch(
                 index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, hosts=TEST_HOSTS, embedder=mock_embedder
             )
             db._async_client = mock_async_opensearch_client

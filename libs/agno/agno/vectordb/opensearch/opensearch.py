@@ -6,7 +6,9 @@ from hashlib import md5
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    from opensearchpy import AsyncOpenSearch, OpenSearch, RequestsHttpConnection
+    from opensearchpy import AsyncOpenSearch as AsyncOpenSearchClient
+    from opensearchpy import OpenSearch as OpenSearchClient
+    from opensearchpy import RequestsHttpConnection
     from opensearchpy import exceptions as opensearch_exceptions
 except ImportError:
     raise ImportError("`opensearch-py` not installed. Please install using `pip install opensearch-py`")
@@ -21,7 +23,7 @@ from agno.vectordb.opensearch.index import Engine, SpaceType
 from agno.vectordb.search import SearchType
 
 
-class OpensearchDb(VectorDb):
+class OpenSearch(VectorDb):
     """
     OpenSearch vector database implementation with comprehensive search capabilities.
 
@@ -134,8 +136,8 @@ class OpensearchDb(VectorDb):
             log_debug(f"Updated engine parameters: {self.parameters}")
 
         # Clients (lazy initialized)
-        self._client: Optional[OpenSearch] = None
-        self._async_client: Optional[AsyncOpenSearch] = None
+        self._client: Optional[OpenSearchClient] = None
+        self._async_client: Optional[AsyncOpenSearchClient] = None
 
         # Index mapping
         self.mapping = self._create_mapping()
@@ -272,12 +274,12 @@ class OpensearchDb(VectorDb):
         }
 
     @property
-    def client(self) -> OpenSearch:
+    def client(self) -> OpenSearchClient:
         """
         Get or create synchronous OpenSearch client.
 
         Returns:
-            OpenSearch: Configured synchronous client instance
+            OpenSearchClient: Configured synchronous client instance
 
         Note:
             Client is lazily initialized and cached for reuse
@@ -287,12 +289,12 @@ class OpensearchDb(VectorDb):
         return self._client
 
     @property
-    def async_client(self) -> AsyncOpenSearch:
+    def async_client(self) -> AsyncOpenSearchClient:
         """
         Get or create asynchronous OpenSearch client.
 
         Returns:
-            AsyncOpenSearch: Configured asynchronous client instance
+            AsyncOpenSearchClient: Configured asynchronous client instance
 
         Note:
             Client is lazily initialized and cached for reuse
@@ -301,12 +303,12 @@ class OpensearchDb(VectorDb):
             self._async_client = self._create_async_client()
         return self._async_client
 
-    def _create_sync_client(self) -> OpenSearch:
+    def _create_sync_client(self) -> OpenSearchClient:
         """
         Create synchronous OpenSearch client with connection testing.
 
         Returns:
-            OpenSearch: Configured and tested synchronous client
+            OpenSearchClient: Configured and tested synchronous client
 
         Raises:
             Exception: If client creation or connection test fails
@@ -324,7 +326,7 @@ class OpensearchDb(VectorDb):
                 "retry_on_timeout": self.retry_on_timeout,
             }
 
-            client = OpenSearch(**connection_config)
+            client = OpenSearchClient(**connection_config)
             ping_result = client.ping()
             log_info(f"Successfully connected to OpenSearch (ping: {ping_result})")
             return client
@@ -332,12 +334,12 @@ class OpensearchDb(VectorDb):
             logger.error(f"Failed to create OpenSearch client: {e}")
             raise
 
-    def _create_async_client(self) -> AsyncOpenSearch:
+    def _create_async_client(self) -> AsyncOpenSearchClient:
         """
         Create asynchronous OpenSearch client.
 
         Returns:
-            AsyncOpenSearch: Configured asynchronous client
+            AsyncOpenSearchClient: Configured asynchronous client
 
         Raises:
             Exception: If client creation fails
@@ -360,7 +362,7 @@ class OpensearchDb(VectorDb):
                 "retry_on_timeout": self.retry_on_timeout,
             }
 
-            client = AsyncOpenSearch(**connection_config)
+            client = AsyncOpenSearchClient(**connection_config)
             log_info("Successfully created async OpenSearch client")
             return client
         except Exception as e:

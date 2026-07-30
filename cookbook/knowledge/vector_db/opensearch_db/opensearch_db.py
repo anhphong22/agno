@@ -1,12 +1,12 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.opensearch import OpensearchDb
+from agno.vectordb.opensearch import OpenSearch
 
 knowledge = Knowledge(
     name="OpenSearch Recipe Knowledge Base",
     description="This is a knowledge base that uses OpenSearch",
-    vector_db=OpensearchDb(
+    vector_db=OpenSearch(
         index_name="recipe",
         dimension=1536,
         hosts=[
