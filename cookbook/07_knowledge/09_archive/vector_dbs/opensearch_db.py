@@ -15,8 +15,6 @@ knowledge = Knowledge(
                 "port": 9200,
             }
         ],
-        # Uncomment the following line to use basic authentication
-        # http_auth=("username", "password"),
     ),
 )
 

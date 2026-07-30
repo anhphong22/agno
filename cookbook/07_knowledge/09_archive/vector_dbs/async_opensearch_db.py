@@ -13,8 +13,6 @@ vector_db = OpenSearch(
             "port": 9200,
         }
     ],
-    # Uncomment the following line to use basic authentication
-    # http_auth=("username", "password"),
 )
 
 knowledge_base = Knowledge(
@@ -25,7 +23,6 @@ agent = Agent(knowledge=knowledge_base)
 
 
 async def main():
-    # Comment out after first run
     await knowledge_base.add_content_async(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
