@@ -1251,6 +1251,72 @@ class TestOpenSearchUtilityOperations:
         mock_opensearch_client.indices.forcemerge.assert_not_called()
 
 
+class TestOpenSearchBulkSelectionOperations:
+    """Deletes and metadata updates must cover every match, not just the first page.
+
+    These previously collected hits from a search with a hardcoded size of 1000 and acted
+    on those ids, so content chunked into more than 1000 documents was only partially
+    deleted or updated while still reporting success.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _existing_index(self, opensearch_db, mock_opensearch_client):
+        mock_opensearch_client.indices.exists.return_value = True
+        mock_opensearch_client.delete_by_query.return_value = {"deleted": 1005, "failures": []}
+        mock_opensearch_client.update_by_query.return_value = {"updated": 1005, "failures": []}
+        opensearch_db._client = mock_opensearch_client
+
+    def test_delete_by_name_uses_delete_by_query(self, opensearch_db, mock_opensearch_client):
+        assert opensearch_db.delete_by_name("big") is True
+
+        body = mock_opensearch_client.delete_by_query.call_args[1]["body"]
+        assert body["query"] == {"term": {"name.keyword": "big"}}
+        assert "size" not in body
+        mock_opensearch_client.search.assert_not_called()
+
+    def test_delete_by_content_id_uses_delete_by_query(self, opensearch_db, mock_opensearch_client):
+        assert opensearch_db.delete_by_content_id("cid-1") is True
+
+        body = mock_opensearch_client.delete_by_query.call_args[1]["body"]
+        assert body["query"] == {"term": {"content_id.keyword": "cid-1"}}
+        mock_opensearch_client.search.assert_not_called()
+
+    def test_delete_by_metadata_uses_delete_by_query(self, opensearch_db, mock_opensearch_client):
+        assert opensearch_db.delete_by_metadata({"tenant": "acme"}) is True
+
+        body = mock_opensearch_client.delete_by_query.call_args[1]["body"]
+        assert body["query"] == {"bool": {"filter": [{"term": {"meta_data.tenant.keyword": "acme"}}]}}
+        mock_opensearch_client.search.assert_not_called()
+
+    def test_delete_reports_failure_when_shards_fail(self, opensearch_db, mock_opensearch_client):
+        """A partial delete must not be reported as success."""
+        mock_opensearch_client.delete_by_query.return_value = {
+            "deleted": 3,
+            "failures": [{"cause": "boom"}],
+        }
+
+        assert opensearch_db.delete_by_name("big") is False
+
+    def test_update_metadata_uses_update_by_query(self, opensearch_db, mock_opensearch_client):
+        opensearch_db.update_metadata("cid-1", {"reviewed": "yes"})
+
+        body = mock_opensearch_client.update_by_query.call_args[1]["body"]
+        assert body["query"] == {"term": {"content_id.keyword": "cid-1"}}
+        assert body["script"]["params"] == {"metadata": {"reviewed": "yes"}}
+        assert "size" not in body
+        mock_opensearch_client.search.assert_not_called()
+
+    def test_update_metadata_raises_when_shards_fail(self, opensearch_db, mock_opensearch_client):
+        """A partial update must surface as an error, not pass silently."""
+        mock_opensearch_client.update_by_query.return_value = {
+            "updated": 2,
+            "failures": [{"cause": "boom"}],
+        }
+
+        with pytest.raises(Exception, match="failure"):
+            opensearch_db.update_metadata("cid-1", {"reviewed": "yes"})
+
+
 class TestOpenSearchDocumentFromHit:
     """Test document creation from search hits."""
 

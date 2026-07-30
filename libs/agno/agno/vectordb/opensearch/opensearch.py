@@ -296,7 +296,7 @@ class OpenSearch(VectorDb):
                     # Fixed-length hash: indexed as an exact-match keyword with no length
                     # cap, since ignore_above would silently drop it from the index.
                     "content_hash": {"type": "keyword"},
-                }
+                },
             },
         }
 
@@ -1865,6 +1865,41 @@ class OpenSearch(VectorDb):
             logger.error(f"Error deleting document by ID {id}: {e}")
             return False
 
+    def _delete_by_query(self, query: Dict[str, Any], description: str) -> bool:
+        """
+        Delete every document matching a query.
+
+        Args:
+            query: OpenSearch query selecting the documents to delete
+            description: Human readable description of the selection, for logging
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Uses the delete_by_query API so all matches are removed.
+        """
+        try:
+            if not self.exists():
+                log_info(f"Index '{self.index_name}' does not exist")
+                return False
+
+            response = self.client.delete_by_query(
+                index=self.index_name, body={"query": query}, refresh=True, conflicts="proceed"
+            )
+
+            deleted = response.get("deleted", 0)
+            failures = response.get("failures") or []
+            if failures:
+                logger.error(f"delete_by_query reported {len(failures)} failure(s) for {description}")
+                return False
+
+            log_info(f"Deleted {deleted} documents with {description}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents by {description}: {e}")
+            return False
+
     def delete_by_name(self, name: str) -> bool:
         """
         Delete documents by name.
@@ -1875,23 +1910,7 @@ class OpenSearch(VectorDb):
         Returns:
             bool: True if successful, False otherwise
         """
-        try:
-            if not self.exists():
-                log_info(f"Index '{self.index_name}' does not exist")
-                return False
-
-            # Search for documents with this name
-            query = {"query": {"term": {"name.keyword": name}}, "size": 1000}
-            response = self.client.search(index=self.index_name, body=query)
-
-            doc_ids = [hit["_id"] for hit in response.get("hits", {}).get("hits", [])]
-            if doc_ids:
-                self.delete_documents(doc_ids)
-                log_info(f"Deleted {len(doc_ids)} documents with name '{name}'")
-            return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by name {name}: {e}")
-            return False
+        return self._delete_by_query({"term": {"name.keyword": name}}, f"name '{name}'")
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         """
@@ -1903,24 +1922,8 @@ class OpenSearch(VectorDb):
         Returns:
             bool: True if successful, False otherwise
         """
-        try:
-            if not self.exists():
-                log_info(f"Index '{self.index_name}' does not exist")
-                return False
-
-            # Build filter conditions
-            filter_conditions = self._build_filter_conditions(metadata)
-            query = {"query": {"bool": {"filter": filter_conditions}}, "size": 1000}
-            response = self.client.search(index=self.index_name, body=query)
-
-            doc_ids = [hit["_id"] for hit in response.get("hits", {}).get("hits", [])]
-            if doc_ids:
-                self.delete_documents(doc_ids)
-                log_info(f"Deleted {len(doc_ids)} documents with metadata {metadata}")
-            return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by metadata {metadata}: {e}")
-            return False
+        filter_conditions = self._build_filter_conditions(metadata)
+        return self._delete_by_query({"bool": {"filter": filter_conditions}}, f"metadata {metadata}")
 
     def delete_by_content_id(self, content_id: str) -> bool:
         """
@@ -1932,23 +1935,7 @@ class OpenSearch(VectorDb):
         Returns:
             bool: True if successful, False otherwise
         """
-        try:
-            if not self.exists():
-                log_info(f"Index '{self.index_name}' does not exist")
-                return False
-
-            # Search for documents with this content_id
-            query = {"query": {"term": {"content_id.keyword": content_id}}, "size": 1000}
-            response = self.client.search(index=self.index_name, body=query)
-
-            doc_ids = [hit["_id"] for hit in response.get("hits", {}).get("hits", [])]
-            if doc_ids:
-                self.delete_documents(doc_ids)
-                log_info(f"Deleted {len(doc_ids)} documents with content_id '{content_id}'")
-            return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by content_id {content_id}: {e}")
-            return False
+        return self._delete_by_query({"term": {"content_id.keyword": content_id}}, f"content_id '{content_id}'")
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
         """
@@ -1966,24 +1953,36 @@ class OpenSearch(VectorDb):
                 logger.error(f"Index '{self.index_name}' does not exist")
                 raise ValueError(f"Index '{self.index_name}' does not exist")
 
-            # Search for documents with this content_id
-            query = {"query": {"term": {"content_id.keyword": content_id}}, "size": 1000}
-            response = self.client.search(index=self.index_name, body=query)
+            # Merge server-side via update_by_query so every matching document is updated,
+            # however many chunks the content was split into.
+            response = self.client.update_by_query(
+                index=self.index_name,
+                body={
+                    "query": {"term": {"content_id.keyword": content_id}},
+                    "script": {
+                        "source": (
+                            "if (ctx._source.meta_data == null) { ctx._source.meta_data = [:] } "
+                            "for (entry in params.metadata.entrySet()) { "
+                            "ctx._source.meta_data[entry.getKey()] = entry.getValue() }"
+                        ),
+                        "lang": "painless",
+                        "params": {"metadata": metadata},
+                    },
+                },
+                refresh=True,
+                conflicts="proceed",
+            )
 
-            hits = response.get("hits", {}).get("hits", [])
-            if not hits:
+            failures = response.get("failures") or []
+            if failures:
+                raise RuntimeError(f"update_by_query reported {len(failures)} failure(s): {failures[:3]}")
+
+            updated = response.get("updated", 0)
+            if not updated:
                 log_info(f"No documents found with content_id '{content_id}'")
                 return
 
-            # Update each document
-            for hit in hits:
-                doc_id = hit["_id"]
-                current_metadata = hit["_source"].get("meta_data", {})
-                updated_metadata = {**current_metadata, **metadata}
-
-                self.client.update(index=self.index_name, id=doc_id, body={"doc": {"meta_data": updated_metadata}})
-
-            log_info(f"Updated metadata for {len(hits)} documents with content_id '{content_id}'")
+            log_info(f"Updated metadata for {updated} documents with content_id '{content_id}'")
         except Exception as e:
             logger.error(f"Error updating metadata for content_id {content_id}: {e}")
             raise
