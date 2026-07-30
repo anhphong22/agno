@@ -334,6 +334,7 @@ vectordbs = [
   "agno[lancedb]",
   "agno[milvusdb]",
   "agno[mongodb]",
+  "agno[opensearch]",
   "agno[pgvector]",
   "agno[pinecone]",
   "agno[pylance]",
