@@ -10,14 +10,7 @@ knowledge = Knowledge(
     description="This is a knowledge base that uses OpenSearch with hybrid search",
     vector_db=OpenSearch(
         index_name="recipe_hybrid",
-        dimension=1536,
         search_type=SearchType.hybrid,
-        hosts=[
-            {
-                "host": "localhost",
-                "port": 9200,
-            }
-        ],
     ),
 )
 

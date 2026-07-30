@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from hashlib import md5
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 try:
     from opensearchpy import AsyncOpenSearch as AsyncOpenSearchClient
@@ -53,15 +53,14 @@ class OpenSearch(VectorDb):
     def __init__(
         self,
         index_name: str,
-        dimension: int,
-        hosts: List[Dict[str, Any]],
+        url: Union[str, List[str]] = "http://localhost:9200",
+        dimension: Optional[int] = None,
         embedder: Optional[Embedder] = None,
         engine: Engine = Engine.faiss,
         distance: Distance = Distance.cosine,
         search_type: SearchType = SearchType.vector,
         parameters: Optional[Dict[str, Any]] = None,
         http_auth: Optional[tuple] = None,
-        use_ssl: bool = False,
         verify_certs: bool = False,
         connection_class: Any = RequestsHttpConnection,
         timeout: int = 30,
@@ -71,14 +70,19 @@ class OpenSearch(VectorDb):
         id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        **kwargs: Any,
     ):
         """
         Initialize OpenSearch vector database.
 
         Args:
             index_name: Name of the OpenSearch index
-            dimension: Dimensionality of the vector embeddings
-            hosts: List of OpenSearch host configurations
+            url: OpenSearch URL, e.g. "https://user:password@my-cluster:9243". The scheme
+                selects TLS and any credentials embedded in the URL are applied, so
+                http_auth is only needed to keep the password out of the URL. Pass a list
+                of URLs to spread requests across the nodes of a cluster.
+            dimension: Dimensionality of the vector embeddings. Defaults to the embedder's
+                dimensions.
             embedder: Embedder instance for generating vector embeddings
             engine: KNN engine to use (faiss, lucene, or nmslib). Defaults to faiss.
                 Note: nmslib cannot be used for new indexes on OpenSearch 3.0.0+.
@@ -86,48 +90,50 @@ class OpenSearch(VectorDb):
             search_type: Default search type (vector, keyword, or hybrid)
             parameters: Custom engine parameters (will be merged with defaults)
             http_auth: HTTP authentication tuple (username, password)
-            use_ssl: Whether to use SSL/TLS for connections
             verify_certs: Whether to verify SSL certificates
-            connection_class: Connection class for OpenSearch client
+            connection_class: Connection class for the synchronous OpenSearch client
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts
             retry_on_timeout: Whether to retry on timeout errors
             reranker: Optional reranker for improving search results
-            id: Optional custom ID. Derived from the host and index name if not provided.
+            id: Optional custom ID. Derived from the url and index name if not provided.
             name: Optional name for the vector database
             description: Optional description for the vector database
+            **kwargs: Additional keyword arguments passed to the underlying
+                `opensearchpy.OpenSearch` and `opensearchpy.AsyncOpenSearch` clients.
 
         Raises:
-            ValueError: If unsupported engine is specified
+            ValueError: If an unsupported engine is specified, or if the embedding
+                dimension cannot be resolved
             ImportError: If opensearch-py is not installed
         """
+        self.hosts: List[str] = [url] if isinstance(url, str) else list(url)
+        if not self.hosts:
+            raise ValueError("At least one OpenSearch url must be provided.")
+
         # Dynamic ID generation based on unique identifiers
         if id is None:
             from agno.utils.string import generate_id
 
-            first_host = hosts[0] if hosts else {}
-            host_identifier = first_host.get("host", "localhost") if isinstance(first_host, dict) else str(first_host)
-            id = generate_id(f"{host_identifier}#{index_name}")
+            id = generate_id(f"{self.hosts[0]}#{index_name}")
 
         # Initialize base class with name, description, and generated ID
         super().__init__(id=id, name=name, description=description)
 
         # Core configuration
         self.index_name = index_name
-        self.dimension = dimension
         self.engine = engine
         self.distance = distance
         self.search_type = search_type
 
         # Connection configuration
-        self.hosts = hosts
         self.http_auth = http_auth
-        self.use_ssl = use_ssl
         self.verify_certs = verify_certs
         self.connection_class = connection_class
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_on_timeout = retry_on_timeout
+        self.client_kwargs = kwargs
 
         # Engine parameters
         self.parameters = self._get_default_parameters()
@@ -139,12 +145,21 @@ class OpenSearch(VectorDb):
         self._client: Optional[OpenSearchClient] = None
         self._async_client: Optional[AsyncOpenSearchClient] = None
 
-        # Index mapping
-        self.mapping = self._create_mapping()
-
         # Initialize embedder and reranker
         self.embedder = self._initialize_embedder(embedder)
         self.reranker = reranker
+
+        # Fall back to the embedder's dimensions, as the other vector dbs do
+        resolved_dimension = dimension if dimension is not None else self.embedder.dimensions
+        if resolved_dimension is None:
+            raise ValueError(
+                "Could not determine the embedding dimension. Pass dimension=... explicitly "
+                f"or use an embedder that declares its dimensions ({type(self.embedder).__name__} does not)."
+            )
+        self.dimension: int = resolved_dimension
+
+        # Index mapping (depends on dimension, engine and distance)
+        self.mapping = self._create_mapping()
 
         if self.reranker:
             log_debug(f"Reranker configured: {type(self.reranker).__name__}")
@@ -315,15 +330,15 @@ class OpenSearch(VectorDb):
         """
         log_debug("Creating OpenSearch client")
         try:
-            connection_config = {
+            connection_config: Dict[str, Any] = {
                 "hosts": self.hosts,
                 "http_auth": self.http_auth,
-                "use_ssl": self.use_ssl,
                 "verify_certs": self.verify_certs,
                 "connection_class": self.connection_class,
                 "timeout": self.timeout,
                 "max_retries": self.max_retries,
                 "retry_on_timeout": self.retry_on_timeout,
+                **self.client_kwargs,
             }
 
             client = OpenSearchClient(**connection_config)
@@ -355,11 +370,11 @@ class OpenSearch(VectorDb):
             connection_config: Dict[str, Any] = {
                 "hosts": self.hosts,
                 "http_auth": self.http_auth,
-                "use_ssl": self.use_ssl,
                 "verify_certs": self.verify_certs,
                 "timeout": self.timeout,
                 "max_retries": self.max_retries,
                 "retry_on_timeout": self.retry_on_timeout,
+                **self.client_kwargs,
             }
 
             client = AsyncOpenSearchClient(**connection_config)

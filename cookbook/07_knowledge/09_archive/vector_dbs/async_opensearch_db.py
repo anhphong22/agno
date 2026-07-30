@@ -6,13 +6,6 @@ from agno.vectordb.opensearch import OpenSearch
 
 vector_db = OpenSearch(
     index_name="recipe_async",
-    dimension=1536,
-    hosts=[
-        {
-            "host": "localhost",
-            "port": 9200,
-        }
-    ],
 )
 
 knowledge_base = Knowledge(

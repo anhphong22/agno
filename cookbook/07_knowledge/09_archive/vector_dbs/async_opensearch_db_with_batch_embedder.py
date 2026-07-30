@@ -26,13 +26,6 @@ from agno.vectordb.opensearch import OpenSearch
 # Note: enable_batch=True enables batch embedding for async operations
 vector_db = OpenSearch(
     index_name="recipes_batch",
-    dimension=1536,
-    hosts=[
-        {
-            "host": "localhost",
-            "port": 9200,
-        }
-    ],
     # Enable batch embedding for improved performance
     embedder=OpenAIEmbedder(enable_batch=True),
 )
