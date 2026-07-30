@@ -1052,7 +1052,7 @@ class TestOpenSearchFilterOperations:
         conditions = opensearch_db._build_filter_conditions(filters)
 
         assert len(conditions) == 1
-        assert conditions[0] == {"terms": {"meta_data.category": ["test1", "test2"]}}
+        assert conditions[0] == {"terms": {"meta_data.category.keyword": ["test1", "test2"]}}
 
     def test_build_filter_range_operators(self, opensearch_db):
         """Test building filter for range operators."""
@@ -1070,7 +1070,7 @@ class TestOpenSearchFilterOperations:
         conditions = opensearch_db._build_filter_conditions(filters)
 
         assert len(conditions) == 1
-        assert conditions[0] == {"terms": {"meta_data.tags": ["tag1", "tag2"]}}
+        assert conditions[0] == {"terms": {"meta_data.tags.keyword": ["tag1", "tag2"]}}
 
     def test_build_filter_multiple_conditions(self, opensearch_db):
         """Test building multiple filter conditions."""
@@ -1079,6 +1079,16 @@ class TestOpenSearchFilterOperations:
         conditions = opensearch_db._build_filter_conditions(filters)
 
         assert len(conditions) == 3
+
+    def test_scalar_list_and_in_filters_target_the_same_field(self, opensearch_db):
+        """All three ways of expressing one exact-match filter must query the same field."""
+        scalar = opensearch_db._build_filter_conditions({"cuisine": "Thai Food"})
+        as_list = opensearch_db._build_filter_conditions({"cuisine": ["Thai Food"]})
+        as_in = opensearch_db._build_filter_conditions({"cuisine": {"$in": ["Thai Food"]}})
+
+        assert scalar[0] == {"term": {"meta_data.cuisine.keyword": "Thai Food"}}
+        assert as_list[0] == {"terms": {"meta_data.cuisine.keyword": ["Thai Food"]}}
+        assert as_in[0] == {"terms": {"meta_data.cuisine.keyword": ["Thai Food"]}}
 
 
 class TestOpenSearchUtilityOperations:

@@ -1708,7 +1708,7 @@ class OpenSearch(VectorDb):
             return self._build_dict_filter_condition(key, value)
         elif isinstance(value, list):
             log_debug(f"Added terms filter for {key}: {value}")
-            return {"terms": {f"meta_data.{key}": value}}
+            return {"terms": {f"meta_data.{key}.keyword": value}}
         else:
             log_debug(f"Added term filter for {key}: {value}")
             return {"term": {f"meta_data.{key}.keyword": value}}
@@ -1734,7 +1734,7 @@ class OpenSearch(VectorDb):
             in_value = value.get("$in") or value.get("in")
             if isinstance(in_value, list):
                 log_debug(f"Added terms filter for {key}: {in_value}")
-                return {"terms": {f"meta_data.{key}": in_value}}
+                return {"terms": {f"meta_data.{key}.keyword": in_value}}
             else:
                 logger.warning(f"Invalid value for $in/in operator for key {key}: {in_value}")
                 return None
