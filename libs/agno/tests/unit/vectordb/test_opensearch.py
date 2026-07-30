@@ -772,10 +772,14 @@ class TestOpenSearchInsertOperations:
         mock_opensearch_client.indices.create.assert_called_once()
         mock_opensearch_client.bulk.assert_called_once()
 
-    def test_insert_empty_documents(self, opensearch_db):
+    def test_insert_empty_documents(self, opensearch_db, mock_opensearch_client):
         """Test insert with empty document list."""
+        mock_opensearch_client.indices.exists.return_value = True
+        opensearch_db._client = mock_opensearch_client
+
         opensearch_db.insert("test_hash", [])
-        # Should not raise any exception
+
+        mock_opensearch_client.bulk.assert_not_called()
 
     def test_insert_bulk_error(self, opensearch_db, mock_opensearch_client, create_test_documents):
         """Test insert handles bulk operation errors."""
@@ -1270,12 +1274,6 @@ class TestOpenSearchDocumentFromHit:
 
 class TestOpenSearchEdgeCases:
     """Test edge cases and error conditions."""
-
-    def test_import_error_handling(self):
-        """Test handling of import errors."""
-        # This would be tested by mocking the import, but since the import is at module level,
-        # we can't easily test this without more complex mocking
-        pass
 
     def test_large_document_handling(self, opensearch_db, mock_opensearch_client, mock_embedder):
         """Test handling of large documents."""
