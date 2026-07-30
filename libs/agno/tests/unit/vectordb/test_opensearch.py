@@ -132,6 +132,8 @@ class TestOpenSearchInitialization:
 
     def test_index_name_is_the_only_required_argument(self, mock_embedder):
         """The common case must need nothing but an index name."""
+        mock_embedder.dimensions = TEST_DIMENSION
+
         with (
             patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
             patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
@@ -139,7 +141,8 @@ class TestOpenSearchInitialization:
             db = OpenSearch(index_name=TEST_INDEX_NAME, embedder=mock_embedder)
 
             assert db.hosts == ["http://localhost:9200"]
-            assert db.dimension == mock_embedder.dimensions
+            assert db.dimension == TEST_DIMENSION
+            assert db.mapping["mappings"]["properties"]["embedding"]["dimension"] == TEST_DIMENSION
 
     def test_url_accepts_a_list_for_multi_node_clusters(self, mock_embedder):
         """A list of urls must be passed through to the client as multiple hosts."""
