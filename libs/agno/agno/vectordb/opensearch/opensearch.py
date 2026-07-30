@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-import uuid
+from hashlib import md5
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -17,8 +17,8 @@ from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
-from agno.vectordb.search import SearchType
 from agno.vectordb.opensearch.index import Engine, SpaceType
+from agno.vectordb.search import SearchType
 
 
 class OpensearchDb(VectorDb):
@@ -66,6 +66,9 @@ class OpensearchDb(VectorDb):
         max_retries: int = 10,
         retry_on_timeout: bool = True,
         reranker: Optional[Reranker] = None,
+        id: Optional[str] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
     ):
         """
         Initialize OpenSearch vector database.
@@ -88,11 +91,25 @@ class OpensearchDb(VectorDb):
             max_retries: Maximum number of retry attempts
             retry_on_timeout: Whether to retry on timeout errors
             reranker: Optional reranker for improving search results
+            id: Optional custom ID. Derived from the host and index name if not provided.
+            name: Optional name for the vector database
+            description: Optional description for the vector database
 
         Raises:
             ValueError: If unsupported engine is specified
             ImportError: If opensearch-py is not installed
         """
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            first_host = hosts[0] if hosts else {}
+            host_identifier = first_host.get("host", "localhost") if isinstance(first_host, dict) else str(first_host)
+            id = generate_id(f"{host_identifier}#{index_name}")
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         # Core configuration
         self.index_name = index_name
         self.dimension = dimension
@@ -247,6 +264,9 @@ class OpensearchDb(VectorDb):
                     "usage": {"type": "object", "enabled": True},
                     "reranking_score": {"type": "float"},
                     "content_id": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+                    # Fixed-length hash: indexed as an exact-match keyword with no length
+                    # cap, since ignore_above would silently drop it from the index.
+                    "content_hash": {"type": "keyword"},
                 }
             },
         }
@@ -323,15 +343,21 @@ class OpensearchDb(VectorDb):
             Exception: If client creation fails
 
         Note:
-            Async client doesn't perform connection test during creation
+            Async client doesn't perform connection test during creation.
+            connection_class is intentionally not forwarded: it defaults to the sync
+            RequestsHttpConnection, which AsyncOpenSearch cannot use. The async client
+            relies on its own AIOHttpConnection default.
         """
         log_debug("Creating async OpenSearch client")
         try:
-            connection_config = {
+            connection_config: Dict[str, Any] = {
                 "hosts": self.hosts,
                 "http_auth": self.http_auth,
                 "use_ssl": self.use_ssl,
                 "verify_certs": self.verify_certs,
+                "timeout": self.timeout,
+                "max_retries": self.max_retries,
+                "retry_on_timeout": self.retry_on_timeout,
             }
 
             client = AsyncOpenSearch(**connection_config)
@@ -660,6 +686,26 @@ class OpensearchDb(VectorDb):
             logger.error(f"Error checking if field exists: {e}")
             return False
 
+    def _build_doc_id(self, doc: Document) -> str:
+        """
+        Build a deterministic OpenSearch _id for a document.
+
+        Args:
+            doc: Document to build an ID for
+
+        Returns:
+            str: Stable document ID
+
+        Note:
+            Derived from the document's explicit id (or a hash of its content) combined
+            with the content_hash, so re-indexing the same document resolves to the same
+            _id and upserts update in place instead of creating duplicates.
+        """
+        cleaned_content = (doc.content or "").replace("\x00", "�")
+        base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
+        content_hash = (doc.meta_data or {}).get("content_hash", "")
+        return md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
     def _prepare_document_for_indexing(self, doc: Document) -> Dict[str, Any]:
         """
         Prepare a document for indexing by ensuring proper structure and embeddings.
@@ -674,15 +720,10 @@ class OpensearchDb(VectorDb):
             ValueError: If document cannot be prepared for indexing
 
         Note:
-            Generates ID if missing, ensures embedding exists, validates dimensions,
-            and builds the final index document structure.
+            Ensures embedding exists, validates dimensions, and builds the final index
+            document structure.
         """
         log_debug(f"Preparing document for indexing: {doc.id}")
-
-        # Generate ID if not present
-        if doc.id is None:
-            doc.id = str(uuid.uuid4())
-            log_debug(f"Generated new document ID: {doc.id}")
 
         # Ensure document has embedding
         self._ensure_document_embedding(doc)
@@ -730,14 +771,20 @@ class OpensearchDb(VectorDb):
             doc: Document with embedding to validate
 
         Raises:
-            ValueError: If embedding dimensions don't match expected dimension
+            ValueError: If the embedding is missing or its dimensions don't match
         """
-        if len(doc.embedding) != self.dimension:
-            error_msg = f"Embedding dimension mismatch for document {doc.id}: expected {self.dimension}, got {len(doc.embedding)}"
+        embedding = doc.embedding
+        if embedding is None:
+            raise ValueError(f"Document {doc.id} has no embedding to validate")
+
+        if len(embedding) != self.dimension:
+            error_msg = (
+                f"Embedding dimension mismatch for document {doc.id}: expected {self.dimension}, got {len(embedding)}"
+            )
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-        log_debug(f"Document {doc.id} embedding dimension check passed: {len(doc.embedding)}")
+        log_debug(f"Document {doc.id} embedding dimension check passed: {len(embedding)}")
 
     def _build_index_document(self, doc: Document) -> Dict[str, Any]:
         """
@@ -751,7 +798,9 @@ class OpensearchDb(VectorDb):
 
         Note:
             Includes core fields (embedding, content, meta_data) and optional fields
-            (name, usage, reranking_score) if they exist.
+            (name, usage, reranking_score) if they exist. The content_hash is also
+            promoted to a top-level field so it can be matched exactly by
+            content_hash_exists().
         """
         index_doc = {
             "embedding": doc.embedding,
@@ -765,6 +814,11 @@ class OpensearchDb(VectorDb):
             value = getattr(doc, field, None)
             if value is not None:
                 index_doc[field] = value
+
+        # Promote content_hash out of meta_data so it is indexed as a top-level keyword
+        content_hash = (doc.meta_data or {}).get("content_hash")
+        if content_hash is not None:
+            index_doc["content_hash"] = content_hash
 
         return index_doc
 
@@ -801,6 +855,28 @@ class OpensearchDb(VectorDb):
         log_debug(f"Created document from search hit: {doc.id} (score: {hit['_score']:.4f})")
         return doc
 
+    def _apply_content_hash_and_filters(
+        self, documents: List[Document], content_hash: str, filters: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Attach the content hash and any filters to each document's metadata.
+
+        Args:
+            documents: Documents to annotate (modified in place)
+            content_hash: Content hash for the documents
+            filters: Optional filters to merge into each document's metadata
+
+        Note:
+            Filters are stored in meta_data so they can be matched by filtered searches,
+            matching the behaviour of the other vector database implementations.
+        """
+        for doc in documents:
+            if doc.meta_data is None:
+                doc.meta_data = {}
+            if filters:
+                doc.meta_data.update(filters)
+            doc.meta_data["content_hash"] = content_hash
+
     def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Insert documents into the index.
@@ -808,16 +884,12 @@ class OpensearchDb(VectorDb):
         Args:
             content_hash: Content hash for the documents
             documents: List of documents to insert
-            filters: Optional filters (unused for insert operation)
+            filters: Optional filters merged into each document's metadata
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
         """
-        # Store content_hash in each document's metadata for tracking
-        for doc in documents:
-            if doc.meta_data is None:
-                doc.meta_data = {}
-            doc.meta_data["content_hash"] = content_hash
+        self._apply_content_hash_and_filters(documents, content_hash, filters)
         self._execute_bulk_operation("insert", documents, self._prepare_bulk_insert_data)
 
     async def async_insert(
@@ -829,18 +901,16 @@ class OpensearchDb(VectorDb):
         Args:
             content_hash: Content hash for the documents
             documents: List of documents to insert
-            filters: Optional filters (unused for insert operation)
+            filters: Optional filters merged into each document's metadata
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
             Uses batch embedding for improved performance.
         """
-        # Store content_hash in each document's metadata for tracking
-        for doc in documents:
-            if doc.meta_data is None:
-                doc.meta_data = {}
-            doc.meta_data["content_hash"] = content_hash
-        await self._async_execute_bulk_operation("insert", documents, self._prepare_bulk_insert_data, use_batch_embed=True)
+        self._apply_content_hash_and_filters(documents, content_hash, filters)
+        await self._async_execute_bulk_operation(
+            "insert", documents, self._prepare_bulk_insert_data, use_batch_embed=True
+        )
 
     def upsert_available(self) -> bool:
         """
@@ -862,16 +932,12 @@ class OpensearchDb(VectorDb):
         Args:
             content_hash: Content hash for the documents
             documents: List of documents to upsert
-            filters: Optional filters (unused for upsert operation)
+            filters: Optional filters merged into each document's metadata
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
         """
-        # Store content_hash in each document's metadata for tracking
-        for doc in documents:
-            if doc.meta_data is None:
-                doc.meta_data = {}
-            doc.meta_data["content_hash"] = content_hash
+        self._apply_content_hash_and_filters(documents, content_hash, filters)
         self._execute_bulk_operation("upsert", documents, self._prepare_bulk_upsert_data)
 
     async def async_upsert(
@@ -883,18 +949,16 @@ class OpensearchDb(VectorDb):
         Args:
             content_hash: Content hash for the documents
             documents: List of documents to upsert
-            filters: Optional filters (unused for upsert operation)
+            filters: Optional filters merged into each document's metadata
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
             Uses batch embedding for improved performance.
         """
-        # Store content_hash in each document's metadata for tracking
-        for doc in documents:
-            if doc.meta_data is None:
-                doc.meta_data = {}
-            doc.meta_data["content_hash"] = content_hash
-        await self._async_execute_bulk_operation("upsert", documents, self._prepare_bulk_upsert_data, use_batch_embed=True)
+        self._apply_content_hash_and_filters(documents, content_hash, filters)
+        await self._async_execute_bulk_operation(
+            "upsert", documents, self._prepare_bulk_upsert_data, use_batch_embed=True
+        )
 
     def get_document_by_id(self, document_id: str) -> Optional[Document]:
         """
@@ -1123,7 +1187,7 @@ class OpensearchDb(VectorDb):
         for doc in documents:
             try:
                 index_doc = self._prepare_document_for_indexing(doc)
-                bulk_data.extend([{"index": {"_index": self.index_name, "_id": doc.id}}, index_doc])
+                bulk_data.extend([{"index": {"_index": self.index_name, "_id": self._build_doc_id(doc)}}, index_doc])
                 prepared_count += 1
             except Exception as e:
                 logger.error(f"Error preparing document {doc.id} for indexing: {e}")
@@ -1145,14 +1209,17 @@ class OpensearchDb(VectorDb):
         Note:
             Skips documents that fail preparation and logs errors.
         """
-        bulk_data = []
+        bulk_data: List[Dict[str, Any]] = []
         prepared_count = 0
 
         for doc in documents:
             try:
                 index_doc = self._prepare_document_for_indexing(doc)
                 bulk_data.extend(
-                    [{"update": {"_index": self.index_name, "_id": doc.id}}, {"doc": index_doc, "doc_as_upsert": True}]
+                    [
+                        {"update": {"_index": self.index_name, "_id": self._build_doc_id(doc)}},
+                        {"doc": index_doc, "doc_as_upsert": True},
+                    ]
                 )
                 prepared_count += 1
             except Exception as e:
@@ -1293,7 +1360,9 @@ class OpensearchDb(VectorDb):
                 else:
                     logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
-                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents if doc.embedding is None]
+                    embed_tasks = [
+                        doc.async_embed(embedder=self.embedder) for doc in documents if doc.embedding is None
+                    ]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
         else:
             # Use individual embedding
@@ -1522,7 +1591,7 @@ class OpensearchDb(VectorDb):
         """
         query_embedding, usage = self._get_query_embedding(query)
 
-        search_query = {
+        search_query: Dict[str, Any] = {
             "size": limit,
             "query": {
                 "bool": {
@@ -1676,7 +1745,11 @@ class OpensearchDb(VectorDb):
 
         Note:
             Uses the configured reranker to improve search result ordering.
+            Returns the documents unchanged when no reranker is configured.
         """
+        if self.reranker is None:
+            return documents
+
         log_debug(f"Applying reranking with {type(self.reranker).__name__}")
         rerank_start = time.time()
         reranked_docs = self.reranker.rerank(query, documents)
@@ -1889,3 +1962,31 @@ class OpensearchDb(VectorDb):
     def get_supported_search_types(self) -> List[str]:
         """Get the supported search types for this vector database."""
         return [SearchType.vector, SearchType.keyword, SearchType.hybrid]
+
+    def close(self) -> None:
+        """Close the synchronous OpenSearch client connection."""
+        if self._client is not None:
+            try:
+                self._client.close()
+                log_debug("OpenSearch client closed successfully")
+            except Exception as e:
+                log_debug(f"Error closing OpenSearch client: {e}")
+            finally:
+                self._client = None
+
+    async def async_close(self) -> None:
+        """
+        Close the asynchronous OpenSearch client connection.
+
+        Note:
+            The async client holds an aiohttp session that must be closed explicitly,
+            otherwise aiohttp reports an unclosed client session on interpreter exit.
+        """
+        if self._async_client is not None:
+            try:
+                await self._async_client.close()
+                log_debug("Async OpenSearch client closed successfully")
+            except Exception as e:
+                log_debug(f"Error closing async OpenSearch client: {e}")
+            finally:
+                self._async_client = None

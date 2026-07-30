@@ -15,7 +15,6 @@ vector_db = OpensearchDb(
     ],
     # Uncomment the following line to use basic authentication
     # http_auth=("username", "password"),
-
 )
 
 knowledge_base = Knowledge(
@@ -24,15 +23,19 @@ knowledge_base = Knowledge(
 
 agent = Agent(knowledge=knowledge_base)
 
-if __name__ == "__main__":
+
+async def main():
     # Comment out after first run
-    asyncio.run(
-        knowledge_base.add_content_async(
-            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-        )
+    await knowledge_base.add_content_async(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 
     # Create and use the agent
-    asyncio.run(
-        agent.aprint_response("How to make Tom Kha Gai", markdown=True)
-    )
+    await agent.aprint_response("How to make Tom Kha Gai", markdown=True)
+
+    # Release the underlying aiohttp session
+    await vector_db.async_close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

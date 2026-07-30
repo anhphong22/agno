@@ -1,6 +1,7 @@
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.knowledge import Knowledge
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.vectordb.opensearch import OpensearchDb
 from agno.vectordb.search import SearchType
 
@@ -19,7 +20,7 @@ knowledge = Knowledge(
         ],
         # Uncomment the following line to use basic authentication
         # http_auth=("username", "password"),
-    )
+    ),
 )
 
 knowledge.add_content(
@@ -29,9 +30,11 @@ knowledge.add_content(
 )
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     knowledge=knowledge,
     search_knowledge=True,
+    # A db is required for the agent to read its own chat history
+    db=SqliteDb(db_file="tmp/opensearch_hybrid.db"),
     read_chat_history=True,
     markdown=True,
 )

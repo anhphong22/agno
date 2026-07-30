@@ -134,6 +134,43 @@ class TestOpensearchDbInitialization:
             assert db.space_type == "cosinesimil"
             mock_openai.assert_called_once()
 
+    def test_base_class_attributes_are_initialized(self, mock_embedder):
+        """VectorDb base attributes must be set so the db can be registered and named."""
+        with (
+            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+        ):
+            db = OpensearchDb(
+                index_name=TEST_INDEX_NAME,
+                dimension=TEST_DIMENSION,
+                hosts=TEST_HOSTS,
+                embedder=mock_embedder,
+            )
+
+            assert db.id is not None
+            assert db.name == "OpensearchDb"
+            assert db.description is None
+
+    def test_explicit_id_and_name_are_preserved(self, mock_embedder):
+        """Explicitly supplied id/name must override the generated defaults."""
+        with (
+            patch("agno.vectordb.opensearch.opensearch.OpenSearch"),
+            patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearch"),
+        ):
+            db = OpensearchDb(
+                index_name=TEST_INDEX_NAME,
+                dimension=TEST_DIMENSION,
+                hosts=TEST_HOSTS,
+                embedder=mock_embedder,
+                id="custom-id",
+                name="custom-name",
+                description="custom description",
+            )
+
+            assert db.id == "custom-id"
+            assert db.name == "custom-name"
+            assert db.description == "custom description"
+
     def test_get_supported_search_types(self, mock_embedder):
         """Test that all three search types are reported as supported."""
         with (
@@ -230,6 +267,48 @@ class TestOpensearchDbClient:
             # Second access should return cached client
             client2 = opensearch_db.async_client
             assert client1 is client2
+
+    def test_async_client_forwards_connection_settings(self, opensearch_db, mock_async_opensearch_client):
+        """Async client must honour the configured timeout and retry settings."""
+        with patch(
+            "agno.vectordb.opensearch.opensearch.AsyncOpenSearch", return_value=mock_async_opensearch_client
+        ) as mock_class:
+            _ = opensearch_db.async_client
+
+            kwargs = mock_class.call_args[1]
+            assert kwargs["timeout"] == opensearch_db.timeout
+            assert kwargs["max_retries"] == opensearch_db.max_retries
+            assert kwargs["retry_on_timeout"] == opensearch_db.retry_on_timeout
+            # connection_class is sync-only and must not leak into the async client
+            assert "connection_class" not in kwargs
+
+    def test_close_releases_sync_client(self, opensearch_db, mock_opensearch_client):
+        """close() must close and clear the cached sync client."""
+        opensearch_db._client = mock_opensearch_client
+
+        opensearch_db.close()
+
+        mock_opensearch_client.close.assert_called_once()
+        assert opensearch_db._client is None
+
+    @pytest.mark.asyncio
+    async def test_async_close_releases_async_client(self, opensearch_db, mock_async_opensearch_client):
+        """async_close() must close the aiohttp-backed client so it is not leaked."""
+        opensearch_db._async_client = mock_async_opensearch_client
+
+        await opensearch_db.async_close()
+
+        mock_async_opensearch_client.close.assert_awaited_once()
+        assert opensearch_db._async_client is None
+
+    @pytest.mark.asyncio
+    async def test_async_close_is_safe_without_client(self, opensearch_db):
+        """async_close() must be a no-op when no client was ever created."""
+        opensearch_db._async_client = None
+
+        await opensearch_db.async_close()
+
+        assert opensearch_db._async_client is None
 
     def test_async_client_creation_failure(self, opensearch_db):
         """Test async client creation failure."""
@@ -490,13 +569,34 @@ class TestOpensearchDbDocumentPreparation:
         assert result["embedding"] == [0.1] * TEST_DIMENSION
         assert doc.embedding == [0.1] * TEST_DIMENSION
 
-    def test_prepare_document_no_id(self, opensearch_db):
-        """Test preparing document without ID generates one."""
+    def test_build_doc_id_is_deterministic(self, opensearch_db):
+        """Documents without an explicit ID must map to a stable _id, not a random one."""
+        doc_a = Document(content="test content", meta_data={"content_hash": "hash1"})
+        doc_b = Document(content="test content", meta_data={"content_hash": "hash1"})
+
+        assert opensearch_db._build_doc_id(doc_a) == opensearch_db._build_doc_id(doc_b)
+
+    def test_build_doc_id_varies_by_content_hash(self, opensearch_db):
+        """The same content under a different content_hash must map to a different _id."""
+        doc = Document(content="test content", meta_data={"content_hash": "hash1"})
+        other = Document(content="test content", meta_data={"content_hash": "hash2"})
+
+        assert opensearch_db._build_doc_id(doc) != opensearch_db._build_doc_id(other)
+
+    def test_build_doc_id_uses_explicit_document_id(self, opensearch_db):
+        """Documents with different explicit IDs must not collide."""
+        doc = Document(id="doc-1", content="same", meta_data={"content_hash": "hash1"})
+        other = Document(id="doc-2", content="same", meta_data={"content_hash": "hash1"})
+
+        assert opensearch_db._build_doc_id(doc) != opensearch_db._build_doc_id(other)
+
+    def test_prepare_document_no_id_does_not_mutate(self, opensearch_db):
+        """Preparing a document must not assign a random ID onto the document."""
         doc = Document(content="test content", embedding=[0.1] * TEST_DIMENSION)
 
-        with patch("uuid.uuid4", return_value=Mock(return_value="generated_id")):
-            opensearch_db._prepare_document_for_indexing(doc)
-            assert doc.id is not None
+        opensearch_db._prepare_document_for_indexing(doc)
+
+        assert doc.id is None
 
     def test_prepare_document_dimension_mismatch(self, opensearch_db):
         """Test preparing document with wrong embedding dimension."""
@@ -561,6 +661,41 @@ class TestOpensearchDbInsertOperations:
         mock_opensearch_client.bulk.assert_called_once()
         call_args = mock_opensearch_client.bulk.call_args
         assert call_args[1]["refresh"] is True
+
+    def test_insert_merges_filters_into_metadata(self, opensearch_db, mock_opensearch_client, create_test_documents):
+        """Filters passed to insert must be stored in metadata so they are searchable."""
+        documents = create_test_documents(1)
+
+        mock_opensearch_client.indices.exists.return_value = True
+        mock_opensearch_client.bulk.return_value = {"errors": False, "items": []}
+        opensearch_db._client = mock_opensearch_client
+
+        opensearch_db.insert("test_hash", documents, filters={"cuisine": "thai"})
+
+        assert documents[0].meta_data["cuisine"] == "thai"
+        assert documents[0].meta_data["content_hash"] == "test_hash"
+
+    def test_insert_promotes_content_hash_to_top_level(
+        self, opensearch_db, mock_opensearch_client, create_test_documents
+    ):
+        """content_hash must be indexed top-level so content_hash_exists() can match it."""
+        documents = create_test_documents(1)
+
+        mock_opensearch_client.indices.exists.return_value = True
+        mock_opensearch_client.bulk.return_value = {"errors": False, "items": []}
+        opensearch_db._client = mock_opensearch_client
+
+        opensearch_db.insert("test_hash", documents)
+
+        bulk_body = mock_opensearch_client.bulk.call_args[1]["body"]
+        indexed_docs = [entry for entry in bulk_body if "content" in entry]
+        assert all(entry["content_hash"] == "test_hash" for entry in indexed_docs)
+
+    def test_content_hash_is_mapped_as_keyword(self, opensearch_db):
+        """content_hash must be an exact-match keyword field, with no length cap."""
+        content_hash_mapping = opensearch_db.mapping["mappings"]["properties"]["content_hash"]
+
+        assert content_hash_mapping == {"type": "keyword"}
 
     def test_insert_creates_index_if_not_exists(self, opensearch_db, mock_opensearch_client, create_test_documents):
         """Test insert creates index if it doesn't exist."""
@@ -627,6 +762,22 @@ class TestOpensearchDbUpsertOperations:
     def test_upsert_available(self, opensearch_db):
         """Test upsert_available returns True."""
         assert opensearch_db.upsert_available() is True
+
+    def test_upsert_targets_same_id_across_calls(self, opensearch_db, mock_opensearch_client, create_test_documents):
+        """Re-upserting the same content must reuse the same _id instead of duplicating."""
+        mock_opensearch_client.indices.exists.return_value = True
+        mock_opensearch_client.bulk.return_value = {"errors": False, "items": []}
+        opensearch_db._client = mock_opensearch_client
+
+        def upsert_ids():
+            opensearch_db.upsert("test_hash", create_test_documents(2))
+            body = mock_opensearch_client.bulk.call_args[1]["body"]
+            return [entry["update"]["_id"] for entry in body if "update" in entry]
+
+        first_ids = upsert_ids()
+        second_ids = upsert_ids()
+
+        assert first_ids == second_ids
 
     def test_upsert_success(self, opensearch_db, mock_opensearch_client, create_test_documents):
         """Test successful document upsert."""
