@@ -1442,7 +1442,10 @@ class OpenSearch(VectorDb):
             List[Document]: List of matching documents
 
         Note:
-            Runs the synchronous search in a thread to avoid blocking the event loop.
+            Search runs through the synchronous client on a worker thread rather than the
+            async client. The search path also embeds the query and optionally reranks the
+            results, both of which are synchronous, so there is little to gain from an
+            async round trip. Offloading to a thread keeps the event loop free.
         """
         return await asyncio.to_thread(self.search, query, limit, filters)
 
