@@ -126,7 +126,9 @@ class TestOpenSearchInitialization:
 
             assert db.index_name == TEST_INDEX_NAME
             assert db.dimension == TEST_DIMENSION
-            assert db.engine == "faiss"
+            # lucene supports cosinesimil on every supported OpenSearch version, unlike
+            # faiss which only gained it in 2.19
+            assert db.engine == "lucene"
             assert db.space_type == "cosinesimil"
             mock_openai.assert_called_once()
 

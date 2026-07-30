@@ -32,7 +32,7 @@ class OpenSearch(VectorDb):
     engines and distance metrics.
 
     Features:
-        - Multiple KNN engines (nmslib, faiss, lucene)
+        - Multiple KNN engines (lucene, faiss, nmslib)
         - Various distance metrics (cosine, l2, max_inner_product)
         - Synchronous and asynchronous operations
         - Bulk document operations (insert, upsert, delete)
@@ -56,7 +56,7 @@ class OpenSearch(VectorDb):
         url: Union[str, List[str]] = "http://localhost:9200",
         dimension: Optional[int] = None,
         embedder: Optional[Embedder] = None,
-        engine: Engine = Engine.faiss,
+        engine: Engine = Engine.lucene,
         distance: Distance = Distance.cosine,
         search_type: SearchType = SearchType.vector,
         parameters: Optional[Dict[str, Any]] = None,
@@ -84,8 +84,11 @@ class OpenSearch(VectorDb):
             dimension: Dimensionality of the vector embeddings. Defaults to the embedder's
                 dimensions.
             embedder: Embedder instance for generating vector embeddings
-            engine: KNN engine to use (faiss, lucene, or nmslib). Defaults to faiss.
-                Note: nmslib cannot be used for new indexes on OpenSearch 3.0.0+.
+            engine: KNN engine to use (lucene, faiss, or nmslib). Defaults to lucene, which
+                supports every space type on all currently supported OpenSearch versions.
+                Note: faiss only gained cosinesimil support in OpenSearch 2.19, so pairing
+                it with distance=cosine is rejected by older clusters. nmslib cannot be
+                used for new indexes on OpenSearch 3.0.0+.
             distance: Distance metric for similarity calculations
             search_type: Default search type (vector, keyword, or hybrid)
             parameters: Custom engine parameters (will be merged with defaults)
