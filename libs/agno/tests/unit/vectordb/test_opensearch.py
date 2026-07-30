@@ -12,7 +12,6 @@ from agno.vectordb.search import SearchType
 # Test constants
 TEST_INDEX_NAME = "test_index"
 TEST_DIMENSION = 768
-TEST_URL = "http://localhost:9200"
 
 
 @pytest.fixture
@@ -73,7 +72,7 @@ def opensearch_db(mock_embedder):
         patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
         patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
     ):
-        db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, url=TEST_URL, embedder=mock_embedder)
+        db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, embedder=mock_embedder)
         return db
 
 
@@ -87,7 +86,6 @@ def opensearch_db_with_reranker(mock_embedder, mock_reranker):
         db = OpenSearch(
             index_name=TEST_INDEX_NAME,
             dimension=TEST_DIMENSION,
-            url=TEST_URL,
             embedder=mock_embedder,
             reranker=mock_reranker,
         )
@@ -124,7 +122,7 @@ class TestOpenSearchInitialization:
             patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
             patch("agno.knowledge.embedder.openai.OpenAIEmbedder") as mock_openai,
         ):
-            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, url=TEST_URL)
+            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION)
 
             assert db.index_name == TEST_INDEX_NAME
             assert db.dimension == TEST_DIMENSION
@@ -206,7 +204,6 @@ class TestOpenSearchInitialization:
             db = OpenSearch(
                 index_name=TEST_INDEX_NAME,
                 dimension=TEST_DIMENSION,
-                url=TEST_URL,
                 embedder=mock_embedder,
             )
 
@@ -223,7 +220,6 @@ class TestOpenSearchInitialization:
             db = OpenSearch(
                 index_name=TEST_INDEX_NAME,
                 dimension=TEST_DIMENSION,
-                url=TEST_URL,
                 embedder=mock_embedder,
                 id="custom-id",
                 name="custom-name",
@@ -243,7 +239,6 @@ class TestOpenSearchInitialization:
             db = OpenSearch(
                 index_name=TEST_INDEX_NAME,
                 dimension=TEST_DIMENSION,
-                url=TEST_URL,
                 embedder=mock_embedder,
             )
 
@@ -264,7 +259,6 @@ class TestOpenSearchInitialization:
             db = OpenSearch(
                 index_name=TEST_INDEX_NAME,
                 dimension=TEST_DIMENSION,
-                url=TEST_URL,
                 embedder=mock_embedder,
                 distance="cosine",
                 engine="faiss",
@@ -1347,7 +1341,7 @@ class TestOpenSearchBatchEmbedding:
             patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
             patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, url=TEST_URL, embedder=mock_embedder)
+            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, embedder=mock_embedder)
 
             # Create documents without embeddings
             docs = [
@@ -1378,7 +1372,7 @@ class TestOpenSearchBatchEmbedding:
             patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
             patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, url=TEST_URL, embedder=mock_embedder)
+            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, embedder=mock_embedder)
 
             # Create mock documents with async_embed method
             doc1 = Mock(spec=Document)
@@ -1412,7 +1406,7 @@ class TestOpenSearchBatchEmbedding:
             patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
             patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, url=TEST_URL, embedder=mock_embedder)
+            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, embedder=mock_embedder)
 
             # Create documents - one with embedding, one without
             docs = [
@@ -1444,7 +1438,7 @@ class TestOpenSearchBatchEmbedding:
             patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
             patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, url=TEST_URL, embedder=mock_embedder)
+            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, embedder=mock_embedder)
 
             docs = [Document(id="doc1", content="content 1")]
 
@@ -1464,7 +1458,7 @@ class TestOpenSearchBatchEmbedding:
             patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
             patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
         ):
-            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, url=TEST_URL, embedder=mock_embedder)
+            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, embedder=mock_embedder)
 
             # Create mock documents with async_embed method
             doc1 = Mock(spec=Document)
@@ -1495,7 +1489,7 @@ class TestOpenSearchBatchEmbedding:
                 "agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient", return_value=mock_async_opensearch_client
             ),
         ):
-            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, url=TEST_URL, embedder=mock_embedder)
+            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, embedder=mock_embedder)
             db._async_client = mock_async_opensearch_client
 
             docs = [Document(id="doc1", content="content 1")]
@@ -1522,7 +1516,7 @@ class TestOpenSearchBatchEmbedding:
                 "agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient", return_value=mock_async_opensearch_client
             ),
         ):
-            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, url=TEST_URL, embedder=mock_embedder)
+            db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, embedder=mock_embedder)
             db._async_client = mock_async_opensearch_client
 
             docs = [Document(id="doc1", content="content 1")]
