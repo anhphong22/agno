@@ -761,6 +761,17 @@ class TestOpenSearchInsertOperations:
 
         assert content_hash_mapping == {"type": "keyword"}
 
+    def test_metadata_keyword_subfields_come_from_a_dynamic_template(self, opensearch_db):
+        """Metadata strings must get .keyword via a dynamic template, not a literal "*" field."""
+        mappings = opensearch_db.mapping["mappings"]
+
+        assert "*" not in mappings["properties"]["meta_data"].get("properties", {})
+
+        template = mappings["dynamic_templates"][0]["meta_data_strings"]
+        assert template["path_match"] == "meta_data.*"
+        assert template["match_mapping_type"] == "string"
+        assert template["mapping"]["fields"]["keyword"]["type"] == "keyword"
+
     def test_insert_creates_index_if_not_exists(self, opensearch_db, mock_opensearch_client, create_test_documents):
         """Test insert creates index if it doesn't exist."""
         documents = create_test_documents(1)

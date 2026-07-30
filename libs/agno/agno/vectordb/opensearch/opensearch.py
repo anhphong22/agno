@@ -266,6 +266,18 @@ class OpenSearch(VectorDb):
                 }
             },
             "mappings": {
+                "dynamic_templates": [
+                    {
+                        "meta_data_strings": {
+                            "path_match": "meta_data.*",
+                            "match_mapping_type": "string",
+                            "mapping": {
+                                "type": "text",
+                                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
+                            },
+                        }
+                    }
+                ],
                 "properties": {
                     "embedding": {
                         "type": "knn_vector",
@@ -277,9 +289,6 @@ class OpenSearch(VectorDb):
                     "meta_data": {
                         "type": "object",
                         "dynamic": True,
-                        "properties": {
-                            "*": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}}
-                        },
                     },
                     "usage": {"type": "object", "enabled": True},
                     "reranking_score": {"type": "float"},
